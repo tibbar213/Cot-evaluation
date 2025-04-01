@@ -142,14 +142,12 @@ REASONING_API_BASE=https://api.deepseek.com/v1
 1. **主要模型 (LLM_MODEL)**：
    - OpenAI：`gpt-3.5-turbo`、`gpt-4`、`gpt-4-turbo`等
    - DeepSeek：`deepseek-ai/DeepSeek-V3`
-   - 通义千问：`dashscope.qwen/Qwen-Max`
-   - 文心一言：`qianfan.ernie-bot-4`
 
 2. **评估模型 (EVALUATION_MODEL)**：推荐使用`gpt-4`或其他强大的模型以获得更准确的评估结果
 
 3. **嵌入模型 (EMBEDDING_MODEL)**：
    - OpenAI：`text-embedding-3-large`、`text-embedding-3-small`
-   - 哈工大：`BAAI/bge-m3`
+   - 硅基：`BAAI/bge-m3`
 
 4. **推理链生成模型 (REASONING_MODEL)**：推荐使用`deepseek-ai/DeepSeek-V3`或`gpt-4`以获得高质量的推理链
 
@@ -566,50 +564,6 @@ cat results/conversation_logs/math_evaluation/combined/math_question_id-timestam
 }
 ```
 
-### 在代码中访问结果和日志
-
-您可以通过以下方式在代码中加载和分析结果：
-
-```python
-import json
-from pathlib import Path
-
-# 加载评估结果
-def load_results(result_prefix=None):
-    result_file = Path('results')
-    if result_prefix:
-        result_file = result_file / f"{result_prefix}_eval_results.json"
-    else:
-        result_file = result_file / "eval_results.json"
-    
-    with open(result_file, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-# 加载对话日志
-def load_conversation_logs(strategy, result_prefix=None):
-    log_dir = Path('results/conversation_logs')
-    if result_prefix:
-        log_dir = log_dir / result_prefix
-    
-    log_dir = log_dir / strategy
-    
-    logs = []
-    for log_file in log_dir.glob('*.json'):
-        with open(log_file, 'r', encoding='utf-8') as f:
-            logs.append(json.load(f))
-    
-    return logs
-
-# 示例：分析特定策略的结果
-results = load_results('math_evaluation')
-combined_accuracy = results['overall_metrics']['combined']['metrics']['accuracy']['average_score']
-print(f"Combined策略的平均准确率：{combined_accuracy:.2f}")
-
-# 示例：分析对话日志
-combined_logs = load_conversation_logs('combined', 'math_evaluation')
-reasoning_examples = [log for log in combined_logs if log['has_reasoning']]
-print(f"包含推理过程的日志数量：{len(reasoning_examples)}")
-```
 
 ## 注意事项
 

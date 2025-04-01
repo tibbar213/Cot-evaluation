@@ -45,7 +45,7 @@ class AutoCoT(BaseStrategy):
         logger.info(f"为问题生成Auto-CoT提示: {question}")
         
         # 从向量数据库中检索相似问题及其答案
-        examples = self.vector_db.get_similar_questions(question, k=self.num_examples)
+        examples = self.vector_db.get_similar_questions(question, k=self.num_examples, exclude_exact_match=True)
         logger.info(f"从向量数据库检索到 {len(examples)} 个相似问题")
         
         # 为元数据存储相似问题

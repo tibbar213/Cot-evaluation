@@ -114,12 +114,12 @@ class CombinedStrategy(BaseStrategy):
         logger.info(f"在向量数据库中搜索与问题相似的 {num_examples} 个示例: {question}")
         
         # 使用向量数据库检索相似问题，排除完全相同的问题
-        similar_questions = self.vector_db.get_similar_questions(question, num_examples, exclude_exact_match=True)
+        similar_questions = self.vector_db.get_similar_questions(question, k=num_examples, exclude_exact_match=True)
         
         # 转换为所需的格式
         formatted_results = []
         for i, (q_text, q_answer) in enumerate(similar_questions):
-            # 我们可能没有问题ID和相似度，所以使用索引作为ID，0作为相似度的占位符
+            # 我们可能没有问题ID和相似度，所以使用索引作为ID，计算一个模拟的相似度分数
             similarity_score = 1.0 - (0.1 * i)  # 模拟相似度分数，第一个最相似
             formatted_results.append((str(i), q_text, q_answer, similarity_score))
             logger.info(f"找到相似问题 #{i+1}: '{q_text}', 答案: '{q_answer}', 相似度: {similarity_score:.4f}")
