@@ -18,13 +18,16 @@ logger = logging.getLogger(__name__)
 class ConversationLogger:
     """对话日志记录器，用于存储模型对话并后续评估"""
     
-    def __init__(self, log_dir: str = os.path.join(RESULT_PATH, "conversation_logs")):
+    def __init__(self, log_dir: str = os.path.join(RESULT_PATH, "conversation_logs"), result_prefix: Optional[str] = None):
         """
         初始化对话日志记录器
         
         Args:
             log_dir (str): 日志保存目录
+            result_prefix (Optional[str]): 结果文件前缀，用于区分不同评估任务
         """
+        if result_prefix:
+            log_dir = os.path.join(log_dir, result_prefix)
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         
@@ -40,7 +43,8 @@ class ConversationLogger:
         question_id: str,
         reference_answer: str = "",
         question_category: str = "",
-        question_difficulty: str = ""
+        question_difficulty: str = "",
+        metadata: Optional[Dict[str, Any]] = None
     ) -> str:
         """
         记录对话日志
@@ -53,6 +57,7 @@ class ConversationLogger:
             reference_answer (str): 参考答案
             question_category (str): 问题类别
             question_difficulty (str): 问题难度
+            metadata (Optional[Dict[str, Any]]): 额外的元数据
             
         Returns:
             str: 日志文件路径
@@ -79,9 +84,9 @@ class ConversationLogger:
         }
         
         # 添加metadata字段（如果存在）
-        if "metadata" in model_response:
-            log_entry["metadata"] = model_response["metadata"]
-            logger.info(f"添加元数据到日志：包含 {len(model_response['metadata'])} 个字段")
+        if metadata:
+            log_entry["metadata"] = metadata
+            logger.info(f"添加元数据到日志：包含 {len(metadata)} 个字段")
         
         # 日志文件名格式: question_id-timestamp.json
         filename = f"{question_id}-{int(time.time())}.json"
@@ -223,4 +228,60 @@ class ConversationLogger:
                 except Exception as e:
                     logger.error(f"读取日志文件 {log_file} 时出错: {e}")
         
-        return list(sessions) 
+        return list(sessions)
+    
+    def add_evaluation_metrics(
+        self, 
+        log_file: str, 
+        accuracy_score: float, 
+        accuracy_explanation: str,
+        metrics: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        将评估指标添加到日志文件中
+        
+        Args:
+            log_file (str): 日志文件路径
+            accuracy_score (float): 准确率评分
+            accuracy_explanation (str): 准确率评分说明
+            metrics (Optional[Dict[str, Any]]): 其他评估指标
+            
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            log_path = Path(log_file)
+            
+            # 读取日志文件
+            with open(log_path, 'r', encoding='utf-8') as f:
+                log_entry = json.load(f)
+            
+            # 更新评估状态和结果
+            log_entry["evaluated"] = True
+            if "evaluation_result" not in log_entry:
+                log_entry["evaluation_result"] = {}
+            
+            # 添加准确率评分
+            log_entry["evaluation_result"]["accuracy"] = {
+                "score": accuracy_score,
+                "explanation": accuracy_explanation
+            }
+            
+            # 添加其他评估指标
+            if metrics:
+                for key, value in metrics.items():
+                    log_entry["evaluation_result"][key] = value
+            
+            # 添加评估时间戳
+            log_entry["evaluation_timestamp"] = time.time()
+            
+            # 保存更新后的日志
+            with open(log_path, 'w', encoding='utf-8') as f:
+                json.dump(log_entry, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"已添加评估指标到日志 {log_file}，准确率: {accuracy_score}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"添加评估指标到日志 {log_file} 时出错: {e}")
+            return False 

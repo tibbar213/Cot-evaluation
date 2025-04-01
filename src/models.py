@@ -15,16 +15,30 @@ from config import (
     LLM_MODEL, 
     EVALUATION_MODEL, 
     EMBEDDING_MODEL,
-    REASONING_MODEL
+    REASONING_MODEL,
+    # 添加各模型专用API配置
+    LLM_API_KEY,
+    LLM_API_BASE,
+    EVALUATION_API_KEY,
+    EVALUATION_API_BASE,
+    EMBEDDING_API_KEY,
+    EMBEDDING_API_BASE,
+    REASONING_API_KEY,
+    REASONING_API_BASE
 )
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# 初始化OpenAI客户端
-client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_API_BASE)
-logger.info(f"已初始化OpenAI客户端，API基础URL: {OPENAI_API_BASE}")
+# 为不同模型创建不同的OpenAI客户端
+default_client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_API_BASE)
+llm_client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_API_BASE)
+evaluation_client = OpenAI(api_key=EVALUATION_API_KEY, base_url=EVALUATION_API_BASE)
+embedding_client = OpenAI(api_key=EMBEDDING_API_KEY, base_url=EMBEDDING_API_BASE)
+reasoning_client = OpenAI(api_key=REASONING_API_KEY, base_url=REASONING_API_BASE)
+
+logger.info(f"已初始化OpenAI客户端")
 logger.info(f"使用的模型 - LLM: {LLM_MODEL}, 评估: {EVALUATION_MODEL}, 嵌入: {EMBEDDING_MODEL}, 推理: {REASONING_MODEL}")
 
 def get_embedding(text: str, model: str = EMBEDDING_MODEL) -> List[float]:
@@ -44,8 +58,9 @@ def get_embedding(text: str, model: str = EMBEDDING_MODEL) -> List[float]:
         
         logger.info(f"正在获取文本的向量嵌入，使用模型: {model}")
         
+        # 使用嵌入模型专用客户端
         # 调用OpenAI API获取嵌入
-        response = client.embeddings.create(
+        response = embedding_client.embeddings.create(
             model=model,
             input=text
         )
@@ -87,8 +102,18 @@ def generate_completion(
             
             logger.info(f"正在生成文本补全，使用模型: {model}")
             
+            # 根据模型类型选择相应的客户端
+            if model == LLM_MODEL:
+                client_to_use = llm_client
+            elif model == EVALUATION_MODEL:
+                client_to_use = evaluation_client
+            elif model == REASONING_MODEL:
+                client_to_use = reasoning_client
+            else:
+                client_to_use = default_client
+            
             # 调用OpenAI API生成补全
-            response = client.chat.completions.create(
+            response = client_to_use.chat.completions.create(
                 model=model,
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant."},
@@ -181,7 +206,7 @@ def evaluate_response(
         else:
             raise ValueError(f"不支持的评估指标: {metric}")
         
-        # 获取评估结果
+        # 获取评估结果，使用评估模型专用客户端
         response = generate_completion(prompt, model=model, temperature=0.3)
         
         # 清理并解析评估结果
@@ -198,15 +223,20 @@ def evaluate_response(
                 score_match = re.search(r'"score"\s*:\s*([0-9\.]+)', response)
                 if score_match:
                     score = float(score_match.group(1))
-                    return {"score": score, "explanation": "从部分解析的JSON中提取的分数"}
+                    explanation_match = re.search(r'"explanation"\s*:\s*"([^"]+)"', response)
+                    explanation = explanation_match.group(1) if explanation_match else "无法提取解释"
+                    return {"score": score, "explanation": explanation}
                 else:
-                    return {"score": 0, "explanation": "无法解析评估结果"}
-            except Exception:
-                return {"score": 0, "explanation": "无法解析评估结果"}
-    
+                    logger.error("无法提取评分，返回默认评分0")
+                    return {"score": 0, "explanation": "无法解析JSON评估结果"}
+            except Exception as ex:
+                logger.error(f"尝试提取评分时出错: {ex}")
+                return {"score": 0, "explanation": "无法解析JSON评估结果"}
     except Exception as e:
         logger.error(f"评估回答时出错: {e}")
-        return {"score": 0, "explanation": f"评估过程出错: {str(e)}"}
+        import traceback
+        logger.error(f"详细错误: {traceback.format_exc()}")
+        return {"score": 0, "explanation": f"评估过程出错: {e}"}
 
 def generate_reasoning_chain(
     question: str,

@@ -18,19 +18,30 @@ logger = logging.getLogger(__name__)
 class Evaluator:
     """评估器类，用于评估模型回答"""
     
-    def __init__(self, result_path: str = RESULT_PATH):
+    def __init__(self, result_path: str = RESULT_PATH, result_prefix: Optional[str] = None):
         """
         初始化评估器
         
         Args:
             result_path (str): 结果保存路径
+            result_prefix (Optional[str]): 结果文件前缀，用于区分不同评估任务
         """
         self.result_path = Path(result_path)
         self.result_path.mkdir(parents=True, exist_ok=True)
         
-        self.metrics = EVALUATION_METRICS
+        # 使用前缀构建结果文件路径
+        if result_prefix:
+            self.result_file = self.result_path / f"{result_prefix}_eval_results.json"
+        else:
+            self.result_file = self.result_path / EVAL_RESULT_FILE
+        
+        # 初始化评估结果
         self.results = {}
-        logger.info(f"初始化评估器 - 结果路径: {result_path}, 评估指标: {self.metrics}")
+        
+        # 初始化评估指标
+        self.metrics = EVALUATION_METRICS
+        
+        logger.info(f"初始化评估器 - 结果路径: {self.result_path}, 评估指标: {self.metrics}")
     
     def evaluate_answer(
         self, 
@@ -129,6 +140,11 @@ class Evaluator:
         overall_metrics = {}
         
         for strategy, evals in self.results.items():
+            # 确保evals是列表
+            if not isinstance(evals, list):
+                logger.warning(f"策略 '{strategy}' 的评估结果不是列表，跳过")
+                continue
+                
             logger.info(f"计算策略 '{strategy}' 的指标 - 共有 {len(evals)} 个评估结果")
             
             strategy_metrics = {
@@ -138,11 +154,14 @@ class Evaluator:
             
             # 计算准确率
             if "accuracy" in self.metrics:
-                accuracy_scores = [
-                    float(e["metrics"]["accuracy"]["score"]) 
-                    for e in evals 
-                    if "accuracy" in e["metrics"]
-                ]
+                accuracy_scores = []
+                for e in evals:
+                    if isinstance(e, dict) and "metrics" in e and "accuracy" in e["metrics"]:
+                        try:
+                            score = float(e["metrics"]["accuracy"]["score"])
+                            accuracy_scores.append(score)
+                        except (ValueError, TypeError, KeyError) as err:
+                            logger.warning(f"处理准确率分数时出错: {err}")
                 
                 if accuracy_scores:
                     avg_accuracy = sum(accuracy_scores) / len(accuracy_scores)
@@ -154,11 +173,14 @@ class Evaluator:
             
             # 计算推理质量
             if "reasoning_quality" in self.metrics:
-                reasoning_scores = [
-                    float(e["metrics"]["reasoning_quality"]["score"]) 
-                    for e in evals 
-                    if "reasoning_quality" in e["metrics"]
-                ]
+                reasoning_scores = []
+                for e in evals:
+                    if isinstance(e, dict) and "metrics" in e and "reasoning_quality" in e["metrics"]:
+                        try:
+                            score = float(e["metrics"]["reasoning_quality"]["score"])
+                            reasoning_scores.append(score)
+                        except (ValueError, TypeError, KeyError) as err:
+                            logger.warning(f"处理推理质量分数时出错: {err}")
                 
                 if reasoning_scores:
                     avg_reasoning = sum(reasoning_scores) / len(reasoning_scores)
@@ -171,13 +193,16 @@ class Evaluator:
             # 按难度分类计算准确率
             difficulty_metrics = {}
             for difficulty in ["easy", "medium", "hard"]:
-                difficulty_evals = [e for e in evals if e["difficulty"] == difficulty]
+                difficulty_evals = [e for e in evals if isinstance(e, dict) and e.get("difficulty") == difficulty]
                 if difficulty_evals:
-                    difficulty_accuracy = [
-                        float(e["metrics"]["accuracy"]["score"]) 
-                        for e in difficulty_evals 
-                        if "accuracy" in e["metrics"]
-                    ]
+                    difficulty_accuracy = []
+                    for e in difficulty_evals:
+                        if isinstance(e, dict) and "metrics" in e and "accuracy" in e["metrics"]:
+                            try:
+                                score = float(e["metrics"]["accuracy"]["score"])
+                                difficulty_accuracy.append(score)
+                            except (ValueError, TypeError, KeyError) as err:
+                                logger.warning(f"处理难度 {difficulty} 的准确率分数时出错: {err}")
                     
                     if difficulty_accuracy:
                         avg_diff_accuracy = sum(difficulty_accuracy) / len(difficulty_accuracy)
@@ -192,15 +217,18 @@ class Evaluator:
             
             # 按类别分类计算准确率
             category_metrics = {}
-            categories = set([e["category"] for e in evals if e["category"]])
+            categories = set(e.get("category", "") for e in evals if isinstance(e, dict) and e.get("category"))
             for category in categories:
-                category_evals = [e for e in evals if e["category"] == category]
+                category_evals = [e for e in evals if isinstance(e, dict) and e.get("category") == category]
                 if category_evals:
-                    category_accuracy = [
-                        float(e["metrics"]["accuracy"]["score"]) 
-                        for e in category_evals 
-                        if "accuracy" in e["metrics"]
-                    ]
+                    category_accuracy = []
+                    for e in category_evals:
+                        if isinstance(e, dict) and "metrics" in e and "accuracy" in e["metrics"]:
+                            try:
+                                score = float(e["metrics"]["accuracy"]["score"])
+                                category_accuracy.append(score)
+                            except (ValueError, TypeError, KeyError) as err:
+                                logger.warning(f"处理类别 {category} 的准确率分数时出错: {err}")
                     
                     if category_accuracy:
                         avg_cat_accuracy = sum(category_accuracy) / len(category_accuracy)
@@ -218,69 +246,48 @@ class Evaluator:
         logger.info("总体评估指标计算完成")
         return overall_metrics
     
-    def save_results(self, filename: str = EVAL_RESULT_FILE) -> str:
-        """
-        保存评估结果
-        
-        Args:
-            filename (str): 文件名
-            
-        Returns:
-            str: 保存的文件路径
-        """
-        logger.info(f"保存评估结果到 {filename}")
-        result_file = self.result_path / filename
-        
-        # 计算总体指标
-        overall_metrics = self.calculate_overall_metrics()
-        
-        # 构建结果数据
-        result_data = {
-            "overall_metrics": overall_metrics,
-            "detailed_results": self.results,
-            "timestamp": time.time()
-        }
-        
-        # 保存结果
-        with open(result_file, 'w', encoding='utf-8') as f:
-            json.dump(result_data, f, ensure_ascii=False, indent=2)
-        
-        logger.info(f"评估结果已保存到 {result_file}")
-        return str(result_file)
-    
-    def load_results(self, filename: str = EVAL_RESULT_FILE) -> Dict[str, Any]:
-        """
-        加载评估结果
-        
-        Args:
-            filename (str): 文件名
-            
-        Returns:
-            Dict[str, Any]: 加载的结果
-        """
-        logger.info(f"加载评估结果从 {filename}")
-        result_file = self.result_path / filename
-        
-        if not result_file.exists():
-            logger.warning(f"结果文件 {result_file} 不存在")
-            return {}
-        
+    def save_results(self):
+        """保存评估结果"""
         try:
-            with open(result_file, 'r', encoding='utf-8') as f:
-                result_data = json.load(f)
+            # 如果已有结果，先加载原有结果
+            if self.result_file.exists():
+                try:
+                    with open(self.result_file, 'r', encoding='utf-8') as f:
+                        existing_results = json.load(f)
+                    
+                    # 合并结果
+                    for strategy, strategy_results in self.results.items():
+                        if strategy in existing_results:
+                            # 原有策略，添加新问题
+                            existing_results[strategy].update(strategy_results)
+                        else:
+                            # 新策略，直接添加
+                            existing_results[strategy] = strategy_results
+                    
+                    # 更新结果
+                    self.results = existing_results
+                except Exception as e:
+                    logger.warning(f"加载原有结果时出错，将覆盖原有结果: {e}")
             
-            # 更新本地结果
-            if "detailed_results" in result_data:
-                self.results = result_data["detailed_results"]
-                logger.info(f"已加载评估结果，共 {len(self.results)} 个策略")
-                for strategy, evals in self.results.items():
-                    logger.info(f"  策略 '{strategy}': {len(evals)} 个评估结果")
+            # 保存结果
+            with open(self.result_file, 'w', encoding='utf-8') as f:
+                json.dump(self.results, f, ensure_ascii=False, indent=2)
             
-            return result_data
-        
+            logger.info(f"评估结果已保存到 {self.result_file}")
+        except Exception as e:
+            logger.error(f"保存评估结果时出错: {e}")
+    
+    def load_results(self):
+        """加载评估结果"""
+        try:
+            if self.result_file.exists():
+                with open(self.result_file, 'r', encoding='utf-8') as f:
+                    self.results = json.load(f)
+                logger.info(f"已加载评估结果，包含 {len(self.results)} 个策略")
+            else:
+                logger.warning(f"评估结果文件 {self.result_file} 不存在")
         except Exception as e:
             logger.error(f"加载评估结果时出错: {e}")
-            return {}
     
     def print_summary(self) -> None:
         """打印评估结果摘要"""

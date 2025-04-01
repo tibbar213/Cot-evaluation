@@ -35,12 +35,26 @@ ENV/
 
 # Project specific
 results/
-data/vector_store/
-*.bin
-*.json
-!package.json
-!package-lock.json
-
-# Logs
 *.log
-logs/ 
+logs/
+temp/
+temp_*
+data/
+
+# Test files
+test_*.py
+*_test.py
+*_debug.log
+auto_reason_debug.log
+
+# Local development settings
+local_settings.py
+
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+coverage.xml
+*.cover 

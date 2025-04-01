@@ -12,7 +12,7 @@ load_dotenv()
 # 基本路径
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# OpenAI API配置
+# 默认OpenAI API配置
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
@@ -21,6 +21,23 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4")
 EVALUATION_MODEL = os.getenv("EVALUATION_MODEL", "gpt-4")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
 REASONING_MODEL = os.getenv("REASONING_MODEL", "deepseek-ai/DeepSeek-V3")
+
+# 各模型专用API配置
+# LLM模型API配置
+LLM_API_KEY = os.getenv("LLM_API_KEY", OPENAI_API_KEY)
+LLM_API_BASE = os.getenv("LLM_API_BASE", OPENAI_API_BASE)
+
+# 评估模型API配置
+EVALUATION_API_KEY = os.getenv("EVALUATION_API_KEY", OPENAI_API_KEY)
+EVALUATION_API_BASE = os.getenv("EVALUATION_API_BASE", OPENAI_API_BASE)
+
+# 嵌入模型API配置
+EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", OPENAI_API_KEY)
+EMBEDDING_API_BASE = os.getenv("EMBEDDING_API_BASE", OPENAI_API_BASE)
+
+# 推理模型API配置
+REASONING_API_KEY = os.getenv("REASONING_API_KEY", OPENAI_API_KEY)
+REASONING_API_BASE = os.getenv("REASONING_API_BASE", OPENAI_API_BASE)
 
 # 向量数据库配置
 VECTOR_DB_PATH = os.getenv("VECTOR_DB_PATH", str(BASE_DIR / "data" / "vector_store"))
