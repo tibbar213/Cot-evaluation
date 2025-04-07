@@ -53,35 +53,41 @@ EVAL_RESULT_FILE = "eval_results.json"
 COT_STRATEGIES = {
     "baseline": {
         "name": "Baseline (无CoT)",
-        "description": "直接向模型提问，不添加任何CoT提示"
+        "description": "直接向模型提问，不添加任何CoT提示",
+        "model": LLM_MODEL
     },
     "zero_shot": {
         "name": "Zero-shot CoT",
         "description": "在提示的最后添加'Let's think step by step.'",
-        "prompt_suffix": "Let's think step by step."
+        "prompt_suffix": "Let's think step by step.",
+        "model": LLM_MODEL
     },
     "few_shot": {
         "name": "Few-shot CoT",
         "description": "使用向量数据库检索相似问题及其答案作为示例",
-        "num_examples": 2  # 检索的示例数量
+        "num_examples": 2,  # 检索的示例数量
+        "model": LLM_MODEL
     },
     "auto_cot": {
         "name": "Auto-CoT",
         "description": "使用向量数据库检索相似问题，并为其生成CoT推理过程",
         "num_examples": 2,  # 检索的示例数量
-        "cot_prefix": "Let's think step by step。"
+        "cot_prefix": "Let's think step by step。",
+        "model": LLM_MODEL
     },
     "auto_reason": {
         "name": "AutoReason",
         "description": "使用强模型生成详细的推理链",
         "reasoning_prompt": "您将获得一个问题，并使用该问题将其分解为一系列逻辑推理轨迹。仅写下推理过程，不要自己回答问题",
-        "reasoning_model": REASONING_MODEL
+        "reasoning_model": REASONING_MODEL,
+        "model": LLM_MODEL
     },
     "combined": {
         "name": "Auto-CoT + AutoReason",
         "description": "结合Auto-CoT和AutoReason的优势",
         "num_examples": 2,  # 检索的示例数量
-        "reasoning_model": REASONING_MODEL  # 用于生成推理链的模型
+        "reasoning_model": REASONING_MODEL,  # 用于生成推理链的模型
+        "model": LLM_MODEL
     }
 }
 

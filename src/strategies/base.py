@@ -5,19 +5,23 @@ CoT策略基类
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Tuple, Optional
 
+from config import LLM_MODEL
+
 class BaseStrategy(ABC):
     """CoT策略基类"""
     
-    def __init__(self, name: str, description: str):
+    def __init__(self, name: str, description: str, model: str = LLM_MODEL):
         """
         初始化策略
         
         Args:
             name (str): 策略名称
             description (str): 策略描述
+            model (str): 使用的模型名称
         """
         self.name = name
         self.description = description
+        self.model = model
     
     @abstractmethod
     def generate_prompt(self, question: str) -> str:
@@ -54,5 +58,6 @@ class BaseStrategy(ABC):
         """
         return {
             "name": self.name,
-            "description": self.description
+            "description": self.description,
+            "model": self.model
         }

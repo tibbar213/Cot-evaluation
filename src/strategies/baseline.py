@@ -6,6 +6,7 @@ import re
 import logging
 from typing import Dict, Any
 from .base import BaseStrategy
+from config import COT_STRATEGIES, LLM_MODEL
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -15,9 +16,12 @@ class Baseline(BaseStrategy):
     
     def __init__(self):
         """初始化Baseline策略"""
+        config = COT_STRATEGIES.get('baseline', {})
+        model = config.get('model', LLM_MODEL)
         super().__init__(
-            name="Baseline (无CoT)",
-            description="直接向模型提问，不添加任何CoT提示"
+            name=config.get('name', "Baseline (无CoT)"),
+            description=config.get('description', "直接向模型提问，不添加任何CoT提示"),
+            model=model
         )
     
     def generate_prompt(self, question: str) -> str:
@@ -76,7 +80,25 @@ class Baseline(BaseStrategy):
         Returns:
             str: 提取的答案
         """
-        # 尝试找到最后一个数字或者最后一句话作为答案
+        # 首先尝试判断响应是否为JSON格式
+        response_trimmed = response.strip()
+        # 检查是否是JSON开头（数组或对象）
+        if response_trimmed.startswith('[') or response_trimmed.startswith('{'):
+            logger.info("检测到可能的JSON格式响应")
+            # 由于响应可能被截断，导致完整解析失败，但我们仍然希望返回原始JSON
+            # 即使被截断的JSON也优先返回JSON格式而不是提取数字
+            try:
+                # 尝试解析JSON
+                import json
+                json.loads(response_trimmed)
+                # 如果成功解析，直接返回整个JSON字符串
+                logger.info("成功解析JSON格式响应")
+                return response_trimmed
+            except json.JSONDecodeError:
+                logger.info("JSON解析失败，但仍然返回JSON格式响应")
+                # 即使解析失败，仍然返回原始响应，因为它仍然是JSON格式的开头
+                # 这比提取单个数字作为答案要好
+                return response_trimmed
         
         # 尝试匹配"答案是X"或"结果是X"等模式
         answer_patterns = [

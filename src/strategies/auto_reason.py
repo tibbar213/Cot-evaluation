@@ -6,7 +6,7 @@ import re
 import logging
 from typing import Dict, Any
 from .base import BaseStrategy
-from config import COT_STRATEGIES, REASONING_MODEL
+from config import COT_STRATEGIES, REASONING_MODEL, LLM_MODEL
 from models import generate_reasoning_chain
 
 # 配置日志
@@ -18,9 +18,11 @@ class AutoReason(BaseStrategy):
     def __init__(self):
         """初始化AutoReason策略"""
         config = COT_STRATEGIES.get('auto_reason', {})
+        model = config.get('model', LLM_MODEL)
         super().__init__(
             name=config.get('name', "AutoReason"),
-            description=config.get('description', "使用强模型生成详细的推理链")
+            description=config.get('description', "使用强模型生成详细的推理链"),
+            model=model
         )
         self.reasoning_prompt = config.get('reasoning_prompt', 
             "您将获得一个问题，并使用该问题将其分解为一系列逻辑推理轨迹。仅写下推理过程，不要给出答案")
@@ -122,6 +124,24 @@ class AutoReason(BaseStrategy):
         Returns:
             str: 提取的答案
         """
+        # 首先尝试判断响应是否为JSON格式
+        response_trimmed = response.strip()
+        # 检查是否是JSON开头（数组或对象）
+        if response_trimmed.startswith('[') or response_trimmed.startswith('{'):
+            logger.info("检测到可能的JSON格式响应")
+            # 由于响应可能被截断，导致完整解析失败，但我们仍然希望返回原始JSON
+            try:
+                # 尝试解析JSON
+                import json
+                json.loads(response_trimmed)
+                # 如果成功解析，直接返回整个JSON字符串
+                logger.info("成功解析JSON格式响应")
+                return response_trimmed
+            except json.JSONDecodeError:
+                logger.info("JSON解析失败，但仍然返回JSON格式响应")
+                # 即使解析失败，仍然返回原始响应，因为它仍然是JSON格式的开头
+                return response_trimmed
+                
         # 尝试匹配数字答案
         answer_match = re.search(r'答案[是为：:]\s*(\d+)', response)
         if answer_match:

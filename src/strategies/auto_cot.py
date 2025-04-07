@@ -6,7 +6,7 @@ import re
 import logging
 from typing import Dict, Any, List, Tuple
 from .base import BaseStrategy
-from config import COT_STRATEGIES
+from config import COT_STRATEGIES, LLM_MODEL
 from vector_db import VectorDatabase
 from models import generate_completion
 
@@ -24,9 +24,11 @@ class AutoCoT(BaseStrategy):
             vector_db (VectorDatabase, optional): 向量数据库实例
         """
         config = COT_STRATEGIES.get('auto_cot', {})
+        model = config.get('model', LLM_MODEL)
         super().__init__(
             name=config.get('name', "Auto-CoT"),
-            description=config.get('description', "使用向量数据库检索相似问题，并为其生成CoT推理过程")
+            description=config.get('description', "使用向量数据库检索相似问题，并为其生成CoT推理过程"),
+            model=model
         )
         self.num_examples = config.get('num_examples', 2)
         self.cot_prefix = config.get('cot_prefix', "Let's think step by step。")
@@ -166,6 +168,23 @@ class AutoCoT(BaseStrategy):
         Returns:
             tuple: (推理过程, 答案)
         """
+        # 检查是否是JSON格式响应
+        response_trimmed = response.strip()
+        if response_trimmed.startswith('[') or response_trimmed.startswith('{'):
+            logger.info("检测到可能的JSON格式响应")
+            # 由于响应可能被截断，导致完整解析失败，但我们仍然希望返回原始JSON
+            try:
+                # 尝试解析JSON
+                import json
+                json.loads(response_trimmed)
+                # 如果成功解析，直接返回空推理和整个JSON字符串
+                logger.info("成功解析JSON格式响应")
+                return "", response_trimmed
+            except json.JSONDecodeError:
+                logger.info("JSON解析失败，但仍然返回JSON格式响应")
+                # 即使解析失败，仍然返回原始响应，因为它仍然是JSON格式的开头
+                return "", response_trimmed
+                
         # 将响应分成多行
         lines = response.strip().split('\n')
         

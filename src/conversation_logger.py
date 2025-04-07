@@ -44,7 +44,8 @@ class ConversationLogger:
         reference_answer: str = "",
         question_category: str = "",
         question_difficulty: str = "",
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        model_name: str = None
     ) -> str:
         """
         记录对话日志
@@ -58,6 +59,7 @@ class ConversationLogger:
             question_category (str): 问题类别
             question_difficulty (str): 问题难度
             metadata (Optional[Dict[str, Any]]): 额外的元数据
+            model_name (str): 使用的模型名称
             
         Returns:
             str: 日志文件路径
@@ -82,6 +84,10 @@ class ConversationLogger:
             "session_id": self.session_id,
             "evaluated": False
         }
+        
+        # 添加模型名称（如果提供）
+        if model_name:
+            log_entry["model_name"] = model_name
         
         # 添加metadata字段（如果存在）
         if metadata:

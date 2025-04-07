@@ -9,7 +9,7 @@ import argparse
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 
-from config import COT_STRATEGIES
+from config import COT_STRATEGIES, LLM_MODEL
 from models import generate_completion
 from vector_db import VectorDatabase
 from evaluation import Evaluator
@@ -17,7 +17,7 @@ from conversation_logger import ConversationLogger
 from dataset_loader import load_livebench_dataset, combine_datasets
 from strategies import (
     Baseline,
-    ZeroShotCoT,
+    ZeroShot,
     FewShotCoT,
     AutoCoT,
     AutoReason,
@@ -88,7 +88,7 @@ def init_strategies(vector_db: VectorDatabase) -> Dict[str, Any]:
     """
     strategies = {
         "baseline": Baseline(),
-        "zero_shot": ZeroShotCoT(),
+        "zero_shot": ZeroShot(),
         "few_shot": FewShotCoT(vector_db=vector_db),
         "auto_cot": AutoCoT(vector_db=vector_db),
         "auto_reason": AutoReason(),
@@ -170,7 +170,9 @@ def run_evaluation(
                 prompt = strategy.generate_prompt(question_text)
                 
                 # 获取模型回答
-                response = generate_completion(prompt)
+                model_to_use = getattr(strategy, 'model', LLM_MODEL)
+                logger.info(f"    使用模型: {model_to_use}")
+                response = generate_completion(prompt, model=model_to_use)
                 
                 # 处理回答
                 processed_response = strategy.process_response(response)
@@ -185,7 +187,8 @@ def run_evaluation(
                         reference_answer=reference_answer,
                         question_category=category,
                         question_difficulty=difficulty,
-                        metadata=processed_response.get("metadata") if isinstance(processed_response, dict) else None
+                        metadata=processed_response.get("metadata") if isinstance(processed_response, dict) else None,
+                        model_name=model_to_use
                     )
                     logger.info(f"    已记录对话日志")
                 

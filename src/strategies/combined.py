@@ -7,7 +7,7 @@ import logging
 import json
 from typing import Dict, Any, List, Tuple
 from .base import BaseStrategy
-from config import COT_STRATEGIES
+from config import COT_STRATEGIES, REASONING_MODEL, LLM_MODEL
 from vector_db import VectorDatabase
 from models import generate_completion, generate_reasoning_chain
 
@@ -25,13 +25,20 @@ class CombinedStrategy(BaseStrategy):
             vector_db (VectorDatabase, optional): 向量数据库实例
         """
         config = COT_STRATEGIES.get('combined', {})
+        model = config.get('model', LLM_MODEL)
         super().__init__(
             name=config.get('name', "Auto-CoT + AutoReason"),
-            description=config.get('description', "结合Auto-CoT和AutoReason的优势")
+            description=config.get('description', "结合Auto-CoT和AutoReason的优势"),
+            model=model
         )
         self.num_examples = config.get('num_examples', 2)
-        self.reasoning_model = config.get('reasoning_model')
+        self.reasoning_model = config.get('reasoning_model', REASONING_MODEL)
         self.vector_db = vector_db or VectorDatabase()
+        
+        # 存储最近一次查询的相似问题和为它们生成的推理链
+        self._last_similar_questions = []
+        self._last_example_reasoning_chains = []
+        
         logger.info(f"初始化组合策略 - 示例数量: {self.num_examples}, 推理模型: {self.reasoning_model}")
     
     def generate_prompt(self, question: str) -> str:
@@ -52,7 +59,7 @@ class CombinedStrategy(BaseStrategy):
         
         # 保存相似问题，供process_response使用
         self._last_similar_questions = similar_questions
-        self._last_example_chains = []
+        self._last_example_reasoning_chains = []
         
         # 为相似问题生成推理链
         examples = []
@@ -66,7 +73,7 @@ class CombinedStrategy(BaseStrategy):
             logger.info(f"生成的推理链: {reasoning_chain}")
             
             # 保存推理链，供process_response使用
-            self._last_example_chains.append({
+            self._last_example_reasoning_chains.append({
                 "question_id": q_id,
                 "question": q_text,
                 "answer": q_answer,
@@ -193,7 +200,7 @@ class CombinedStrategy(BaseStrategy):
                     "num_examples": self.num_examples
                 },
                 "similar_questions": getattr(self, "_last_similar_questions", []),
-                "example_reasoning_chains": getattr(self, "_last_example_chains", [])
+                "example_reasoning_chains": getattr(self, "_last_example_reasoning_chains", [])
             }
         }
         
@@ -215,6 +222,23 @@ class CombinedStrategy(BaseStrategy):
             tuple: (推理过程, 答案)
         """
         logger.info("从响应中提取推理过程和答案")
+        
+        # 检查是否是JSON格式响应
+        response_trimmed = response.strip()
+        if response_trimmed.startswith('[') or response_trimmed.startswith('{'):
+            logger.info("检测到可能的JSON格式响应")
+            # 由于响应可能被截断，导致完整解析失败，但我们仍然希望返回原始JSON
+            try:
+                # 尝试解析JSON
+                import json
+                json.loads(response_trimmed)
+                # 如果成功解析，直接返回空推理和整个JSON字符串
+                logger.info("成功解析JSON格式响应")
+                return "", response_trimmed
+            except json.JSONDecodeError:
+                logger.info("JSON解析失败，但仍然返回JSON格式响应")
+                # 即使解析失败，仍然返回原始响应，因为它仍然是JSON格式的开头
+                return "", response_trimmed
         
         # 尝试匹配"答案是X"或"结果是X"等模式
         answer_patterns = [

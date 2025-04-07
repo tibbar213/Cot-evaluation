@@ -6,20 +6,22 @@ import re
 import logging
 from typing import Dict, Any
 from .base import BaseStrategy
-from config import COT_STRATEGIES
+from config import COT_STRATEGIES, LLM_MODEL
 
 # 配置日志
 logger = logging.getLogger(__name__)
 
-class ZeroShotCoT(BaseStrategy):
+class ZeroShot(BaseStrategy):
     """Zero-shot CoT策略"""
     
     def __init__(self):
-        """初始化Zero-shot CoT策略"""
+        """初始化Zero-shot策略"""
         config = COT_STRATEGIES.get('zero_shot', {})
+        model = config.get('model', LLM_MODEL)
         super().__init__(
             name=config.get('name', "Zero-shot CoT"),
-            description=config.get('description', "在提示的最后添加'Let's think step by step.'")
+            description=config.get('description', "在提示的最后添加'Let's think step by step.'"),
+            model=model
         )
         self.prompt_suffix = config.get('prompt_suffix', "Let's think step by step.")
     
@@ -85,6 +87,23 @@ class ZeroShotCoT(BaseStrategy):
         Returns:
             tuple: (推理过程, 答案)
         """
+        # 检查是否是JSON格式响应
+        response_trimmed = response.strip()
+        if response_trimmed.startswith('[') or response_trimmed.startswith('{'):
+            logger.info("检测到可能的JSON格式响应")
+            # 由于响应可能被截断，导致完整解析失败，但我们仍然希望返回原始JSON
+            try:
+                # 尝试解析JSON
+                import json
+                json.loads(response_trimmed)
+                # 如果成功解析，直接返回空推理和整个JSON字符串
+                logger.info("成功解析JSON格式响应")
+                return "", response_trimmed
+            except json.JSONDecodeError:
+                logger.info("JSON解析失败，但仍然返回JSON格式响应")
+                # 即使解析失败，仍然返回原始响应，因为它仍然是JSON格式的开头
+                return "", response_trimmed
+            
         # 将响应分成多行
         lines = response.strip().split('\n')
         
