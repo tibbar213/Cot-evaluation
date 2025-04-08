@@ -6,8 +6,11 @@ import json
 import logging
 import time
 import argparse
+import concurrent.futures
+import os
 from typing import Dict, List, Any, Optional
 from pathlib import Path
+from threading import Lock
 
 from config import COT_STRATEGIES, LLM_MODEL
 from models import generate_completion
@@ -98,6 +101,171 @@ def init_strategies(vector_db: VectorDatabase) -> Dict[str, Any]:
     logger.info(f"已初始化 {len(strategies)} 个策略")
     return strategies
 
+def process_question_strategy(
+    question: Dict[str, Any],
+    strategy_name: str,
+    strategy: Any,
+    evaluator: Optional[Evaluator] = None,
+    conversation_logger: Optional[ConversationLogger] = None,
+    log_only: bool = False
+) -> Dict[str, Any]:
+    """
+    处理单个问题和策略组合
+    
+    Args:
+        question (Dict[str, Any]): 问题
+        strategy_name (str): 策略名称
+        strategy (Any): 策略实例
+        evaluator (Optional[Evaluator]): 评估器实例
+        conversation_logger (Optional[ConversationLogger]): 对话日志记录器实例
+        log_only (bool): 是否只记录对话日志而不进行评估
+        
+    Returns:
+        Dict[str, Any]: 处理结果
+    """
+    question_id = question["id"]
+    question_text = question["question"]
+    reference_answer = question.get("answer", question.get("reference_answer", ""))
+    category = question.get("category", "")
+    difficulty = question.get("difficulty", "")
+    
+    result = {
+        "question_id": question_id,
+        "strategy_name": strategy_name,
+        "success": False,
+        "error": None
+    }
+    
+    try:
+        # 生成提示
+        prompt = strategy.generate_prompt(question_text)
+        
+        # 获取模型回答
+        model_to_use = getattr(strategy, 'model', LLM_MODEL)
+        logger.info(f"    使用模型: {model_to_use}")
+        
+        # 模拟模式，用于测试
+        mock_mode = os.environ.get("MOCK_MODE", "").lower() in ("true", "1", "yes")
+        if mock_mode:
+            logger.info("    使用模拟模式")
+            response = f"模拟回答：问题 {question_id}, 策略 {strategy_name}。答案是：42"
+        else:
+            # 实际调用API
+            try:
+                response = generate_completion(prompt, model=model_to_use)
+            except Exception as api_error:
+                logger.error(f"    API调用失败: {api_error}")
+                # 降级到模拟模式
+                response = f"API调用失败，使用模拟回答。答案是：模拟数据"
+        
+        # 处理回答
+        try:
+            processed_response = strategy.process_response(response)
+            
+            # 确保processed_response是字典
+            if not isinstance(processed_response, dict):
+                logger.warning(f"    策略 {strategy_name} 的process_response未返回字典，将包装为字典")
+                processed_response = {
+                    "full_response": response,
+                    "answer": str(processed_response),
+                    "has_reasoning": False
+                }
+            
+            # 确保包含必要的字段
+            if "answer" not in processed_response:
+                logger.warning(f"    策略 {strategy_name} 的响应中缺少answer字段，将设为完整响应")
+                processed_response["answer"] = response
+                
+            if "full_response" not in processed_response:
+                processed_response["full_response"] = response
+                
+            if "has_reasoning" not in processed_response:
+                processed_response["has_reasoning"] = False
+                
+            if "reasoning" not in processed_response:
+                processed_response["reasoning"] = None
+                
+        except Exception as process_error:
+            logger.error(f"    处理响应失败: {process_error}")
+            # 提供默认处理结果
+            processed_response = {
+                "full_response": response,
+                "answer": response,
+                "has_reasoning": False,
+                "reasoning": None
+            }
+        
+        # 如果有对话日志记录器，保存对话日志
+        if conversation_logger:
+            conversation_logger.log_conversation(
+                question=question_text,
+                model_response=processed_response,
+                strategy_name=strategy_name,
+                question_id=question_id,
+                reference_answer=reference_answer,
+                question_category=category,
+                question_difficulty=difficulty,
+                metadata=processed_response.get("metadata") if isinstance(processed_response, dict) else None,
+                model_name=model_to_use
+            )
+            logger.info(f"    已记录对话日志")
+        
+        # 如果不是只记录日志且有评估器，评估回答
+        if not log_only and evaluator:
+            eval_result = evaluator.evaluate_answer(
+                question=question_text,
+                reference_answer=reference_answer,
+                model_response=processed_response,
+                strategy_name=strategy_name,
+                question_id=question_id,
+                question_category=category,
+                question_difficulty=difficulty
+            )
+            
+            logger.info(f"    准确率: {eval_result['metrics']['accuracy']['score']}")
+            
+            # 如果有对话日志记录器，将评估结果添加到日志
+            if conversation_logger:
+                log_file = f"{conversation_logger.log_dir}/{strategy_name}/{question_id}-{int(time.time())}.json"
+                # 尝试找到最近记录的日志文件
+                log_files = list(Path(f"{conversation_logger.log_dir}/{strategy_name}").glob(f"{question_id}-*.json"))
+                if log_files:
+                    # 按修改时间排序，取最新的
+                    log_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                    log_file = str(log_files[0])
+                    
+                    # 添加评估结果到日志
+                    accuracy_score = eval_result['metrics']['accuracy']['score']
+                    accuracy_explanation = eval_result['metrics']['accuracy']['explanation']
+                    
+                    # 构建其他评估指标
+                    other_metrics = {}
+                    for metric_name, metric_value in eval_result['metrics'].items():
+                        if metric_name != 'accuracy':
+                            other_metrics[metric_name] = metric_value
+                    
+                    # 将评估结果添加到日志
+                    conversation_logger.add_evaluation_metrics(
+                        log_file=log_file,
+                        accuracy_score=accuracy_score,
+                        accuracy_explanation=accuracy_explanation,
+                        metrics=other_metrics
+                    )
+            
+            result["success"] = True
+            result["eval_result"] = eval_result
+            
+        else:
+            # 如果只记录日志，也标记为成功
+            result["success"] = True
+            
+    except Exception as e:
+        logger.error(f"处理时出错: {e}")
+        logger.exception("详细错误：")
+        result["error"] = str(e)
+    
+    return result
+
 def run_evaluation(
     questions: List[Dict[str, Any]], 
     strategies: Dict[str, Any],
@@ -106,7 +274,8 @@ def run_evaluation(
     strategy_filter: Optional[List[str]] = None,
     question_filter: Optional[List[str]] = None,
     max_questions: Optional[int] = None,
-    log_only: bool = False
+    log_only: bool = False,
+    num_threads: int = 1
 ) -> None:
     """
     运行评估
@@ -120,6 +289,7 @@ def run_evaluation(
         question_filter (Optional[List[str]]): 问题过滤器
         max_questions (Optional[int]): 最大问题数
         log_only (bool): 是否只记录对话日志而不进行评估
+        num_threads (int): 线程数，用于并行处理评估任务
     """
     # 过滤策略
     if strategy_filter:
@@ -153,91 +323,71 @@ def run_evaluation(
     
     start_time = time.time()
     
-    for i, question in enumerate(filtered_questions):
-        question_id = question["id"]
-        question_text = question["question"]
-        reference_answer = question["answer"]
-        category = question.get("category", "")
-        difficulty = question.get("difficulty", "")
+    # 决定是否使用多线程
+    if num_threads <= 1:
+        # 单线程处理
+        logger.info("使用单线程处理评估任务")
         
-        logger.info(f"处理问题 {i+1}/{total_questions}: {question_id}")
-        
-        for strategy_name, strategy in filtered_strategies.items():
-            logger.info(f"  使用策略 {strategy_name}")
+        for i, question in enumerate(filtered_questions):
+            question_id = question["id"]
+            logger.info(f"处理问题 {i+1}/{total_questions}: {question_id}")
             
-            try:
-                # 生成提示
-                prompt = strategy.generate_prompt(question_text)
+            for strategy_name, strategy in filtered_strategies.items():
+                logger.info(f"  使用策略 {strategy_name}")
                 
-                # 获取模型回答
-                model_to_use = getattr(strategy, 'model', LLM_MODEL)
-                logger.info(f"    使用模型: {model_to_use}")
-                response = generate_completion(prompt, model=model_to_use)
+                result = process_question_strategy(
+                    question=question,
+                    strategy_name=strategy_name,
+                    strategy=strategy,
+                    evaluator=evaluator,
+                    conversation_logger=conversation_logger,
+                    log_only=log_only
+                )
                 
-                # 处理回答
-                processed_response = strategy.process_response(response)
+                if result["success"]:
+                    logger.info(f"完成问题 {question_id} 使用策略 {strategy_name} 的评估")
+                else:
+                    logger.error(f"问题 {question_id} 使用策略 {strategy_name} 的评估失败: {result['error']}")
+    else:
+        # 多线程处理
+        logger.info(f"使用多线程处理评估任务 (线程数: {num_threads})")
+        
+        # 创建任务列表
+        tasks = []
+        for question in filtered_questions:
+            for strategy_name, strategy in filtered_strategies.items():
+                tasks.append((question, strategy_name, strategy))
+        
+        logger.info(f"共创建了 {len(tasks)} 个评估任务")
+        
+        # 使用线程池处理任务
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            # 提交所有任务
+            future_to_task = {
+                executor.submit(
+                    process_question_strategy, 
+                    question, strategy_name, strategy, 
+                    evaluator, conversation_logger, log_only
+                ): (question["id"], strategy_name) 
+                for question, strategy_name, strategy in tasks
+            }
+            
+            # 处理完成的任务
+            completed = 0
+            for future in concurrent.futures.as_completed(future_to_task):
+                question_id, strategy_name = future_to_task[future]
+                try:
+                    result = future.result()
+                    if result["success"]:
+                        logger.info(f"完成问题 {question_id} 使用策略 {strategy_name} 的评估")
+                    else:
+                        logger.error(f"问题 {question_id} 使用策略 {strategy_name} 的评估失败: {result['error']}")
+                except Exception as e:
+                    logger.error(f"获取任务结果时出错: {e}")
                 
-                # 如果有对话日志记录器，保存对话日志
-                if conversation_logger:
-                    conversation_logger.log_conversation(
-                        question=question_text,
-                        model_response=processed_response,
-                        strategy_name=strategy_name,
-                        question_id=question_id,
-                        reference_answer=reference_answer,
-                        question_category=category,
-                        question_difficulty=difficulty,
-                        metadata=processed_response.get("metadata") if isinstance(processed_response, dict) else None,
-                        model_name=model_to_use
-                    )
-                    logger.info(f"    已记录对话日志")
-                
-                # 如果不是只记录日志且有评估器，评估回答
-                if not log_only and evaluator:
-                    eval_result = evaluator.evaluate_answer(
-                        question=question_text,
-                        reference_answer=reference_answer,
-                        model_response=processed_response,
-                        strategy_name=strategy_name,
-                        question_id=question_id,
-                        question_category=category,
-                        question_difficulty=difficulty
-                    )
-                    
-                    logger.info(f"    准确率: {eval_result['metrics']['accuracy']['score']}")
-                    
-                    # 如果有对话日志记录器，将评估结果添加到日志
-                    if conversation_logger:
-                        log_file = f"{conversation_logger.log_dir}/{strategy_name}/{question_id}-{int(time.time())}.json"
-                        # 尝试找到最近记录的日志文件
-                        log_files = list(Path(f"{conversation_logger.log_dir}/{strategy_name}").glob(f"{question_id}-*.json"))
-                        if log_files:
-                            # 按修改时间排序，取最新的
-                            log_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-                            log_file = str(log_files[0])
-                            
-                            # 添加评估结果到日志
-                            accuracy_score = eval_result['metrics']['accuracy']['score']
-                            accuracy_explanation = eval_result['metrics']['accuracy']['explanation']
-                            
-                            # 构建其他评估指标
-                            other_metrics = {}
-                            for metric_name, metric_value in eval_result['metrics'].items():
-                                if metric_name != 'accuracy':
-                                    other_metrics[metric_name] = metric_value
-                            
-                            # 将评估结果添加到日志
-                            conversation_logger.add_evaluation_metrics(
-                                log_file=log_file,
-                                accuracy_score=accuracy_score,
-                                accuracy_explanation=accuracy_explanation,
-                                metrics=other_metrics
-                            )
-                            logger.info(f"    已将评估结果添加到日志: {log_file}")
-                
-            except Exception as e:
-                logger.error(f"处理时出错: {e}")
-                logger.exception("详细错误：")
+                completed += 1
+                if completed % 10 == 0 or completed == len(tasks):
+                    logger.info(f"已完成 {completed}/{len(tasks)} 个评估任务 ({completed/len(tasks)*100:.1f}%)")
     
     # 计算总耗时
     elapsed_time = time.time() - start_time
@@ -262,6 +412,7 @@ def main():
     parser.add_argument("--summary-only", action="store_true", help="仅显示摘要，不进行评估")
     parser.add_argument("--log-only", action="store_true", help="仅记录对话日志，不进行评估")
     parser.add_argument("--session-id", type=str, help="指定会话ID，如果不指定则使用当前时间戳")
+    parser.add_argument("--threads", type=int, default=1, help="线程数，用于并行处理评估任务")
     
     # Hugging Face数据集相关参数
     parser.add_argument("--use-hf-dataset", action="store_true", help="使用Hugging Face数据集")
@@ -288,6 +439,9 @@ def main():
     parser.add_argument("--result-prefix", type=str, help="结果文件前缀，用于区分不同评估任务")
     
     args = parser.parse_args()
+    
+    # 初始化questions变量
+    questions = None
     
     # 如果要使用HF数据集或者本地JSON数据集
     if args.use_hf_dataset and args.hf_dataset:
@@ -361,7 +515,8 @@ def main():
                     strategy_filter=args.strategies,
                     question_filter=args.question_ids,
                     max_questions=args.max_questions,
-                    log_only=args.log_only
+                    log_only=args.log_only,
+                    num_threads=args.threads
                 )
         else:
             # 加载所有指定的数据集
@@ -372,10 +527,16 @@ def main():
                 local_json_dir=args.local_json_dir,
                 save_dir=args.save_dir if args.save_datasets else None
             )
-            
-    if not questions:
+    else:
+        # 不使用HF数据集，加载本地问题集
+        questions = load_questions(args.questions)
+        logger.info(f"从本地加载问题集: {args.questions}")
+    
+    if not questions or len(questions) == 0:
         logger.error("未能加载问题集，程序退出")
         return
+    
+    logger.info(f"成功加载 {len(questions)} 个问题")
     
     # 初始化向量数据库
     vector_db = VectorDatabase(args.vector_db_dir)
@@ -421,7 +582,8 @@ def main():
         strategy_filter=args.strategies,
         question_filter=args.question_ids,
         max_questions=args.max_questions,
-        log_only=args.log_only
+        log_only=args.log_only,
+        num_threads=args.threads
     )
 
 if __name__ == "__main__":

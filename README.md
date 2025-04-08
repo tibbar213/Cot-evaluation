@@ -575,3 +575,44 @@ cat results/conversation_logs/math_evaluation/combined/math_question_id-timestam
 6. 批量评估可能需要较长时间，建议设置适当的批处理大小
 7. 使用`--separate-db`参数时，会为每个数据集创建独立的向量数据库，有助于提高相似问题检索质量
 8. 使用`--result-prefix`参数可以将不同评估任务的结果分开存储，便于后续分析和比较
+
+## 多线程评估功能
+
+该项目现在支持多线程并行处理评估任务，可以显著提高处理大量问题和策略时的效率。
+
+### 多线程功能特点
+
+- 支持实时评估模式的多线程处理
+- 支持批量评估模式的多线程处理
+- 线程安全的评估结果记录和日志存储
+- 可配置的线程数量
+
+### 使用方法
+
+在命令行中通过`--threads`参数指定线程数：
+
+```bash
+# 使用4个线程进行实时评估
+python src/main.py --threads 4 --max-questions 10 --strategies zero_shot auto_cot
+
+# 使用8个线程进行批量评估
+python src/batch_evaluation.py --threads 8 --session your_session_id
+```
+
+### 示例脚本
+
+提供了一个多线程评估示例脚本，位于`examples/run_multithreaded.py`：
+
+```bash
+# 使用实时评估模式，4个线程
+python examples/run_multithreaded.py --threads 4 --max-questions 10
+
+# 使用批处理模式，8个线程
+python examples/run_multithreaded.py --threads 8 --max-questions 20 --batch-mode
+```
+
+### 性能建议
+
+- 对于需要大量API调用的场景，多线程可以提高并行度，更有效地利用API配额
+- 建议根据系统配置和API限制调整线程数
+- 大型评估任务建议使用批处理模式：先收集对话日志，再多线程评估

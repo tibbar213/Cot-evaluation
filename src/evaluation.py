@@ -7,6 +7,7 @@ import logging
 import time
 from typing import Dict, List, Any, Tuple, Optional
 from pathlib import Path
+from threading import Lock
 
 from config import EVALUATION_METRICS, RESULT_PATH, EVAL_RESULT_FILE
 from models import evaluate_response
@@ -40,6 +41,9 @@ class Evaluator:
         
         # 初始化评估指标
         self.metrics = EVALUATION_METRICS
+        
+        # 添加线程锁
+        self.results_lock = Lock()
         
         logger.info(f"初始化评估器 - 结果路径: {self.result_path}, 评估指标: {self.metrics}")
     
@@ -120,11 +124,13 @@ class Evaluator:
             else:
                 logger.warning("has_reasoning为True但推理内容为空，跳过推理质量评估")
         
-        # 添加到结果集合
-        if strategy_name not in self.results:
-            self.results[strategy_name] = []
+        # 使用锁添加到结果集合
+        with self.results_lock:
+            if strategy_name not in self.results:
+                self.results[strategy_name] = []
+            
+            self.results[strategy_name].append(eval_result)
         
-        self.results[strategy_name].append(eval_result)
         logger.info(f"完成问题 {question_id} 的评估")
         
         return eval_result
@@ -139,7 +145,11 @@ class Evaluator:
         logger.info("计算总体评估指标...")
         overall_metrics = {}
         
-        for strategy, evals in self.results.items():
+        # 使用锁保护读取结果
+        with self.results_lock:
+            results_copy = self.results.copy()
+        
+        for strategy, evals in results_copy.items():
             # 确保evals是列表
             if not isinstance(evals, list):
                 logger.warning(f"策略 '{strategy}' 的评估结果不是列表，跳过")
@@ -249,29 +259,31 @@ class Evaluator:
     def save_results(self):
         """保存评估结果"""
         try:
-            # 如果已有结果，先加载原有结果
-            if self.result_file.exists():
-                try:
-                    with open(self.result_file, 'r', encoding='utf-8') as f:
-                        existing_results = json.load(f)
-                    
-                    # 合并结果
-                    for strategy, strategy_results in self.results.items():
-                        if strategy in existing_results:
-                            # 原有策略，添加新问题
-                            existing_results[strategy].update(strategy_results)
-                        else:
-                            # 新策略，直接添加
-                            existing_results[strategy] = strategy_results
-                    
-                    # 更新结果
-                    self.results = existing_results
-                except Exception as e:
-                    logger.warning(f"加载原有结果时出错，将覆盖原有结果: {e}")
-            
-            # 保存结果
-            with open(self.result_file, 'w', encoding='utf-8') as f:
-                json.dump(self.results, f, ensure_ascii=False, indent=2)
+            # 使用锁保护写操作
+            with self.results_lock:
+                # 如果已有结果，先加载原有结果
+                if self.result_file.exists():
+                    try:
+                        with open(self.result_file, 'r', encoding='utf-8') as f:
+                            existing_results = json.load(f)
+                        
+                        # 合并结果
+                        for strategy, strategy_results in self.results.items():
+                            if strategy in existing_results:
+                                # 原有策略，添加新问题
+                                existing_results[strategy].update(strategy_results)
+                            else:
+                                # 新策略，直接添加
+                                existing_results[strategy] = strategy_results
+                        
+                        # 更新结果
+                        self.results = existing_results
+                    except Exception as e:
+                        logger.warning(f"加载原有结果时出错，将覆盖原有结果: {e}")
+                
+                # 保存结果
+                with open(self.result_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.results, f, ensure_ascii=False, indent=2)
             
             logger.info(f"评估结果已保存到 {self.result_file}")
         except Exception as e:
@@ -281,8 +293,11 @@ class Evaluator:
         """加载评估结果"""
         try:
             if self.result_file.exists():
-                with open(self.result_file, 'r', encoding='utf-8') as f:
-                    self.results = json.load(f)
+                # 使用锁保护读操作
+                with self.results_lock:
+                    with open(self.result_file, 'r', encoding='utf-8') as f:
+                        self.results = json.load(f)
+                
                 logger.info(f"已加载评估结果，包含 {len(self.results)} 个策略")
             else:
                 logger.warning(f"评估结果文件 {self.result_file} 不存在")
