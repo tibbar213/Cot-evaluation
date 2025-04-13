@@ -36,9 +36,46 @@ llm-evaluation/
 └── venv/                    # 虚拟环境（通常忽略）
 ```
 
-## Web界面
+## Web界面使用指南
 
-`web/` 目录提供了一个用于展示评估结果和统计数据的Web界面。用户可以通过运行Web服务来查看模型评估的可视化报告和详细日志。请参考 `web/server.py` 和相关配置文件以启动该服务。
+### 启动Web服务
+
+本项目提供了可视化Web界面，可通过不同方式加载评估数据：
+
+1. 从SQLite数据库加载：
+```bash
+python web/server.py --use-sqlite --db-path data/backup.db
+```
+
+2. 从评估结果JSON文件加载：
+```bash
+python web/server.py --use-json --json-path results/eval_results.json
+```
+
+3. 从对话日志目录加载（推荐）：
+```bash
+python web/server.py --use-logs --logs-path results/conversation_logs
+```
+
+### 启动前端应用
+
+```bash
+cd web
+npm install  # 首次使用时安装依赖
+npm run dev
+```
+
+打开浏览器访问 http://localhost:3000 查看评估结果。
+
+### Web界面功能
+
+Web界面提供以下功能：
+1. **数据集、模型和策略选择**：动态加载实际存在的选项
+2. **评估统计**：显示总评估记录数和平均准确率
+3. **策略对比**：通过图表和表格比较不同策略的性能
+4. **模型对比**：比较不同模型在相同策略下的表现
+5. **详细评估记录**：查看所有评估记录，包括问题、回答和评分
+6. **详情查看**：点击详情按钮可查看完整的问题、答案和评估解释
 
 ## 思维链（CoT）策略
 
