@@ -90,19 +90,14 @@ class AutoReason(BaseStrategy):
         Returns:
             Dict[str, Any]: 处理后的响应，包含答案和其他信息
         """
-        # 尝试从响应中提取答案
-        answer = self._extract_answer(response)
-        logger.info(f"提取的答案: {answer}")
-        
-        # 尝试提取推理过程（如果有）
-        reasoning = self._extract_reasoning(response)
-        logger.info(f"提取的推理过程长度: {len(reasoning) if reasoning else 0}")
+        # 不再提取答案和推理，直接使用完整响应
+        logger.info("不提取答案和推理，使用完整响应")
         
         return {
             "full_response": response,
-            "answer": answer,
-            "has_reasoning": bool(reasoning),
-            "reasoning": reasoning,
+            "answer": response.strip(),  # 使用整个响应作为答案
+            "has_reasoning": True,  # 假设包含推理
+            "reasoning": response.strip(),  # 使用整个响应作为推理
             # 添加元数据信息
             "metadata": {
                 "strategy_details": {

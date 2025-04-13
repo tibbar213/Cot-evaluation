@@ -52,13 +52,12 @@ class Baseline(BaseStrategy):
         """
         logger.info("处理模型响应")
         
-        # 尝试从响应中提取数字或简短答案
-        answer = self._extract_answer(response)
-        logger.info(f"提取的答案: '{answer}'")
+        # 不再提取答案，直接使用完整响应
+        logger.info("不提取答案，使用完整响应")
         
         return {
             "full_response": response,
-            "answer": answer,
+            "answer": response.strip(),  # 使用整个响应作为答案
             "has_reasoning": False,
             "reasoning": None,
             # 添加元数据

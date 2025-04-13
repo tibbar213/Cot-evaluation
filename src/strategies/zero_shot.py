@@ -56,17 +56,14 @@ class ZeroShot(BaseStrategy):
         """
         logger.info("处理模型响应")
         
-        # 尝试从响应中提取答案和推理过程
-        reasoning, answer = self._extract_reasoning_and_answer(response)
-        
-        logger.info(f"提取的答案: '{answer}'")
-        logger.info(f"提取的推理过程长度: {len(reasoning) if reasoning else 0}")
+        # 不再提取答案和推理，直接使用完整响应
+        logger.info("不提取答案和推理，使用完整响应")
         
         return {
             "full_response": response,
-            "answer": answer,
-            "has_reasoning": bool(reasoning),
-            "reasoning": reasoning,
+            "answer": response.strip(),  # 使用整个响应作为答案
+            "has_reasoning": True,  # 假设Zero-shot CoT产生的响应包含推理
+            "reasoning": response.strip(),  # 使用整个响应作为推理
             # 添加元数据
             "metadata": {
                 "strategy_details": {

@@ -29,12 +29,7 @@ class Evaluator:
         """
         self.result_path = Path(result_path)
         self.result_path.mkdir(parents=True, exist_ok=True)
-        
-        # 使用前缀构建结果文件路径
-        if result_prefix:
-            self.result_file = self.result_path / f"{result_prefix}_eval_results.json"
-        else:
-            self.result_file = self.result_path / EVAL_RESULT_FILE
+        self.result_prefix = result_prefix
         
         # 初始化评估结果
         self.results = {}
@@ -255,54 +250,6 @@ class Evaluator:
         
         logger.info("总体评估指标计算完成")
         return overall_metrics
-    
-    def save_results(self):
-        """保存评估结果"""
-        try:
-            # 使用锁保护写操作
-            with self.results_lock:
-                # 如果已有结果，先加载原有结果
-                if self.result_file.exists():
-                    try:
-                        with open(self.result_file, 'r', encoding='utf-8') as f:
-                            existing_results = json.load(f)
-                        
-                        # 合并结果
-                        for strategy, strategy_results in self.results.items():
-                            if strategy in existing_results:
-                                # 原有策略，添加新问题
-                                existing_results[strategy].update(strategy_results)
-                            else:
-                                # 新策略，直接添加
-                                existing_results[strategy] = strategy_results
-                        
-                        # 更新结果
-                        self.results = existing_results
-                    except Exception as e:
-                        logger.warning(f"加载原有结果时出错，将覆盖原有结果: {e}")
-                
-                # 保存结果
-                with open(self.result_file, 'w', encoding='utf-8') as f:
-                    json.dump(self.results, f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"评估结果已保存到 {self.result_file}")
-        except Exception as e:
-            logger.error(f"保存评估结果时出错: {e}")
-    
-    def load_results(self):
-        """加载评估结果"""
-        try:
-            if self.result_file.exists():
-                # 使用锁保护读操作
-                with self.results_lock:
-                    with open(self.result_file, 'r', encoding='utf-8') as f:
-                        self.results = json.load(f)
-                
-                logger.info(f"已加载评估结果，包含 {len(self.results)} 个策略")
-            else:
-                logger.warning(f"评估结果文件 {self.result_file} 不存在")
-        except Exception as e:
-            logger.error(f"加载评估结果时出错: {e}")
     
     def print_summary(self) -> None:
         """打印评估结果摘要"""

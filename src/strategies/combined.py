@@ -183,14 +183,14 @@ class CombinedStrategy(BaseStrategy):
         logger.info("处理模型响应")
         logger.info(f"原始响应: {response}")
         
-        # 尝试从响应中提取答案和推理过程
-        reasoning, answer = self._extract_reasoning_and_answer(response)
+        # 不再提取答案和推理，直接使用完整响应
+        logger.info("不提取答案和推理，使用完整响应")
         
         result = {
             "full_response": response,
-            "answer": answer,
-            "has_reasoning": bool(reasoning),
-            "reasoning": reasoning,
+            "answer": response.strip(),  # 使用整个响应作为答案
+            "has_reasoning": True,  # 假设包含推理
+            "reasoning": response.strip(),  # 使用整个响应作为推理
             # 添加额外信息，用于在conversation_logs中记录
             "metadata": {
                 "strategy_details": {
@@ -204,92 +204,4 @@ class CombinedStrategy(BaseStrategy):
             }
         }
         
-        logger.info(f"提取的答案: '{answer}'")
-        logger.info(f"是否包含推理: {bool(reasoning)}")
-        if reasoning:
-            logger.info(f"提取的推理: {reasoning[:100]}...")
-        
         return result
-    
-    def _extract_reasoning_and_answer(self, response: str) -> tuple:
-        """
-        从响应中提取推理过程和答案
-        
-        Args:
-            response (str): 模型响应
-            
-        Returns:
-            tuple: (推理过程, 答案)
-        """
-        logger.info("从响应中提取推理过程和答案")
-        
-        # 检查是否是JSON格式响应
-        response_trimmed = response.strip()
-        if response_trimmed.startswith('[') or response_trimmed.startswith('{'):
-            logger.info("检测到可能的JSON格式响应")
-            # 由于响应可能被截断，导致完整解析失败，但我们仍然希望返回原始JSON
-            try:
-                # 尝试解析JSON
-                import json
-                json.loads(response_trimmed)
-                # 如果成功解析，直接返回空推理和整个JSON字符串
-                logger.info("成功解析JSON格式响应")
-                return "", response_trimmed
-            except json.JSONDecodeError:
-                logger.info("JSON解析失败，但仍然返回JSON格式响应")
-                # 即使解析失败，仍然返回原始响应，因为它仍然是JSON格式的开头
-                return "", response_trimmed
-        
-        # 尝试匹配"答案是X"或"结果是X"等模式
-        answer_patterns = [
-            r"答案[是为:：]\s*(.+?)[\s\.。]",
-            r"结果[是为:：]\s*(.+?)[\s\.。]",
-            r"等于[：:]\s*(.+?)[\s\.。]",
-            r"得到[：:]\s*(.+?)[\s\.。]",
-            r"有[：:]\s*(.+?)[\s\.。]个",
-            r"一共有[：:]\s*(.+?)[\s\.。]",
-            r"总共有[：:]\s*(.+?)[\s\.。]",
-            r"最终答案[：:]\s*(.+?)[\s\.。]",
-        ]
-        
-        answer = ""
-        matched_pattern = None
-        
-        for pattern in answer_patterns:
-            match = re.search(pattern, response)
-            if match:
-                answer = match.group(1).strip()
-                matched_pattern = pattern
-                logger.info(f"使用模式 '{pattern}' 匹配到答案: '{answer}'")
-                break
-        
-        # 如果没有找到匹配，尝试找到最后一个数字
-        if not answer:
-            numbers = re.findall(r'\d+', response)
-            if numbers:
-                answer = numbers[-1]
-                logger.info(f"使用最后一个数字作为答案: '{answer}'")
-            else:
-                logger.warning("无法从响应中提取答案")
-        
-        # 尝试提取推理过程
-        if answer and answer in response:
-            # 找到答案在响应中的位置
-            answer_pos = response.find(answer)
-            if answer_pos > 0:
-                reasoning = response[:answer_pos].strip()
-                logger.info(f"从答案位置提取推理过程，长度: {len(reasoning)}")
-            else:
-                reasoning = ""
-                logger.warning("答案位于响应开头，无法提取推理过程")
-        else:
-            # 如果没有找到答案，假设整个响应都是推理过程
-            reasoning = response.strip()
-            logger.info("使用整个响应作为推理过程")
-            
-            # 如果推理过程以"答案："结尾，移除它
-            if re.search(r'答案[：:]\s*$', reasoning):
-                reasoning = re.sub(r'答案[：:]\s*$', '', reasoning).strip()
-                logger.info("从推理过程中移除'答案:'后缀")
-        
-        return reasoning, answer

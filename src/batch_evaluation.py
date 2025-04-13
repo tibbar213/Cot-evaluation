@@ -168,8 +168,7 @@ class BatchEvaluator:
                     if completed % 10 == 0 or completed == total_logs:
                         logger.info(f"已完成 {completed}/{total_logs} 条日志评估 ({completed/total_logs*100:.1f}%)")
         
-        # 保存评估结果
-        self.evaluator.save_results()
+        # 不再保存评估结果文件
         
         return {
             "total_evaluated": len(results),

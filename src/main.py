@@ -18,6 +18,7 @@ from vector_db import VectorDatabase
 from evaluation import Evaluator
 from conversation_logger import ConversationLogger
 from dataset_loader import load_livebench_dataset, combine_datasets
+from sqlite_backup import SQLiteBackup
 from strategies import (
     Baseline,
     ZeroShot,
@@ -275,7 +276,10 @@ def run_evaluation(
     question_filter: Optional[List[str]] = None,
     max_questions: Optional[int] = None,
     log_only: bool = False,
-    num_threads: int = 1
+    num_threads: int = 1,
+    sqlite_backup: Optional[SQLiteBackup] = None,
+    dataset: str = None,
+    model: str = None
 ) -> None:
     """
     运行评估
@@ -290,6 +294,9 @@ def run_evaluation(
         max_questions (Optional[int]): 最大问题数
         log_only (bool): 是否只记录对话日志而不进行评估
         num_threads (int): 线程数，用于并行处理评估任务
+        sqlite_backup (Optional[SQLiteBackup]): SQLite备份实例
+        dataset (str): 数据集名称
+        model (str): 模型名称
     """
     # 过滤策略
     if strategy_filter:
@@ -393,10 +400,17 @@ def run_evaluation(
     elapsed_time = time.time() - start_time
     logger.info(f"处理完成，总耗时: {elapsed_time:.2f}秒")
     
-    # 如果不是只记录日志且有评估器，保存结果并打印摘要
+    # 如果不是只记录日志且有评估器，打印摘要
     if not log_only and evaluator:
-        # 保存结果
-        evaluator.save_results()
+        # 如果有SQLite备份实例，备份结果
+        if sqlite_backup and conversation_logger:
+            session_id = conversation_logger.session_id
+            try:
+                logger.info(f"备份评估结果到SQLite数据库，会话ID: {session_id}")
+                sqlite_backup.backup_all_results(evaluator.results, session_id, dataset, model)
+                logger.info("评估结果备份完成")
+            except Exception as e:
+                logger.error(f"备份评估结果时出错: {e}")
         
         # 打印摘要
         evaluator.print_summary()
@@ -413,6 +427,10 @@ def main():
     parser.add_argument("--log-only", action="store_true", help="仅记录对话日志，不进行评估")
     parser.add_argument("--session-id", type=str, help="指定会话ID，如果不指定则使用当前时间戳")
     parser.add_argument("--threads", type=int, default=1, help="线程数，用于并行处理评估任务")
+    
+    # SQLite备份相关参数
+    parser.add_argument("--sqlite-backup", action="store_true", help="是否启用SQLite备份")
+    parser.add_argument("--sqlite-db", type=str, default="data/backup.db", help="SQLite数据库路径")
     
     # Hugging Face数据集相关参数
     parser.add_argument("--use-hf-dataset", action="store_true", help="使用Hugging Face数据集")
@@ -437,8 +455,19 @@ def main():
     
     # 输出与保存相关
     parser.add_argument("--result-prefix", type=str, help="结果文件前缀，用于区分不同评估任务")
+    parser.add_argument("--model", type=str, help="指定使用的模型名称（仅用于记录）")
     
     args = parser.parse_args()
+    
+    # 初始化SQLite备份（如果启用）
+    sqlite_backup = None
+    if args.sqlite_backup:
+        try:
+            sqlite_backup = SQLiteBackup(db_path=args.sqlite_db)
+            logger.info(f"已启用SQLite备份，数据库路径: {args.sqlite_db}")
+        except Exception as e:
+            logger.error(f"初始化SQLite备份失败: {e}")
+            sqlite_backup = None
     
     # 初始化questions变量
     questions = None
@@ -500,7 +529,7 @@ def main():
                 
                 # 初始化评估器和对话日志记录器
                 evaluator = None if args.log_only else Evaluator(result_prefix=result_prefix)
-                conversation_logger = ConversationLogger(result_prefix=result_prefix)
+                conversation_logger = ConversationLogger(result_prefix=result_prefix, sqlite_backup=sqlite_backup)
                 
                 # 如果指定了会话ID，设置会话ID
                 if args.session_id:
@@ -516,7 +545,10 @@ def main():
                     question_filter=args.question_ids,
                     max_questions=args.max_questions,
                     log_only=args.log_only,
-                    num_threads=args.threads
+                    num_threads=args.threads,
+                    sqlite_backup=sqlite_backup,
+                    dataset=dataset_name,
+                    model=args.model
                 )
         else:
             # 加载所有指定的数据集
@@ -567,11 +599,14 @@ def main():
     
     # 初始化评估器和对话日志记录器
     evaluator = None if args.log_only else Evaluator(result_prefix=args.result_prefix)
-    conversation_logger = ConversationLogger(result_prefix=args.result_prefix)
+    conversation_logger = ConversationLogger(result_prefix=args.result_prefix, sqlite_backup=sqlite_backup)
     
     # 如果指定了会话ID，设置会话ID
     if args.session_id:
         conversation_logger.session_id = args.session_id
+    
+    # 确定数据集名称
+    dataset_name = args.hf_dataset[0] if args.hf_dataset else None
     
     # 运行评估
     run_evaluation(
@@ -583,8 +618,15 @@ def main():
         question_filter=args.question_ids,
         max_questions=args.max_questions,
         log_only=args.log_only,
-        num_threads=args.threads
+        num_threads=args.threads,
+        sqlite_backup=sqlite_backup,
+        dataset=dataset_name,
+        model=args.model
     )
+    
+    # 关闭SQLite连接
+    if sqlite_backup:
+        sqlite_backup.close()
 
 if __name__ == "__main__":
     main()

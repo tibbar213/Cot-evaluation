@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Card, Row, Col, Select, Statistic, Table, Tabs, message } from 'antd';
+import { Layout, Card, Row, Col, Select, Statistic, Table, Tabs, message, Tooltip, Button, Modal } from 'antd';
 import { Column } from '@ant-design/plots';
 import type { EvaluationData, EvaluationResult } from '@/types/evaluation';
 
@@ -7,10 +7,10 @@ const { Header, Content } = Layout;
 const { Option } = Select;
 const { TabPane } = Tabs;
 
-// 模拟模型列表
-const MODELS = ['gpt-3.5', 'gpt-4', 'deepseek-v3'];
-// 模拟数据集列表
-const DATASETS = ['livebench/math', 'livebench/reasoning', 'livebench/data_analysis'];
+// 修改为空数组，将从API获取
+const MODELS: string[] = [];
+// 修改为空数组，将从API获取
+const DATASETS: string[] = [];
 
 // 将数据集名称简化显示
 const getShortDatasetName = (datasetName: string) => {
@@ -23,14 +23,66 @@ const getShortDatasetName = (datasetName: string) => {
 const Dashboard: React.FC = () => {
   const [data, setData] = useState<EvaluationData | null>(null);
   const [selectedStrategy, setSelectedStrategy] = useState<string>('');
-  const [selectedModel, setSelectedModel] = useState<string>(MODELS[0]);
-  const [selectedDataset, setSelectedDataset] = useState<string>(DATASETS[0]);
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [selectedDataset, setSelectedDataset] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [allDatasets, setAllDatasets] = useState<{[key: string]: EvaluationData}>({});
   const [error, setError] = useState<string | null>(null);
+  // 添加新的状态
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [availableDatasets, setAvailableDatasets] = useState<string[]>([]);
+  const [availableStrategies, setAvailableStrategies] = useState<string[]>([]);
+  const [optionsLoaded, setOptionsLoaded] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
+
+  // 添加一个新的函数来获取选项
+  const fetchOptions = async () => {
+    try {
+      console.log("正在获取可用选项");
+      const response = await fetch("http://localhost:5000/api/dataset-model-strategy-options");
+      
+      if (!response.ok) {
+        throw new Error(`网络请求失败: ${response.status} ${response.statusText}`);
+      }
+      
+      const json = await response.json();
+      console.log("获取到可用选项:", json);
+      
+      if (json.datasets && json.datasets.length > 0) {
+        setAvailableDatasets(json.datasets);
+        setSelectedDataset(json.datasets[0]);
+      }
+      
+      if (json.models && json.models.length > 0) {
+        setAvailableModels(json.models);
+        setSelectedModel(json.models[0]);
+      }
+      
+      if (json.strategies && json.strategies.length > 0) {
+        setAvailableStrategies(json.strategies);
+      }
+      
+      setOptionsLoaded(true);
+    } catch (error) {
+      console.error("获取选项失败:", error);
+      // 如果API调用失败，使用默认值
+      setAvailableDatasets(['math', 'reasoning']);
+      setAvailableModels(['GPT-3.5', 'GPT-4']);
+      setAvailableStrategies(['baseline', 'zero_shot']);
+      setSelectedDataset('math');
+      setSelectedModel('GPT-3.5');
+      setOptionsLoaded(true);
+    }
+  };
+
+  // 在组件首次加载时获取选项
+  useEffect(() => {
+    fetchOptions();
+  }, []);
 
   // 加载单个数据集的数据，增加重试和错误处理
-  const fetchDataset = async (dataset: string, model: string): Promise<{dataset: string, data: EvaluationData} | null> => {
+  const fetchDataset = async (dataset: string = selectedDataset, model: string = selectedModel): Promise<{dataset: string, data: EvaluationData} | null> => {
     try {
       console.log(`正在加载数据集: ${dataset}, 模型: ${model}`);
       const response = await fetch(`http://localhost:5000/api/evaluation-results?dataset=${dataset}&model=${model}`);
@@ -50,16 +102,19 @@ const Dashboard: React.FC = () => {
 
   // 加载所有数据集的数据
   useEffect(() => {
+    // 只有当选项加载完成后才加载数据
+    if (!optionsLoaded) return;
+    
     const loadData = async () => {
       setLoading(true);
       setError(null);
       
       try {
         // 先获取一个数据集，确保基本功能可用
-        const initialDataset = await fetchDataset(selectedDataset, selectedModel);
+        const initialDataset = await fetchDataset();
         
         if (!initialDataset) {
-          throw new Error(`无法加载初始数据集: ${selectedDataset}`);
+          throw new Error("无法加载数据");
         }
         
         // 更新当前数据和策略
@@ -77,7 +132,7 @@ const Dashboard: React.FC = () => {
         const datasetsData = { [selectedDataset]: initialDataset.data };
         
         // 然后加载其他数据集
-        const otherDatasets = DATASETS.filter(ds => ds !== selectedDataset);
+        const otherDatasets = availableDatasets.filter(ds => ds !== selectedDataset);
         const otherDataPromises = otherDatasets.map(ds => fetchDataset(ds, selectedModel));
         const results = await Promise.all(otherDataPromises);
         
@@ -98,7 +153,7 @@ const Dashboard: React.FC = () => {
     };
     
     loadData();
-  }, [selectedModel]);
+  }, [selectedModel, optionsLoaded]); // 添加optionsLoaded作为依赖
 
   // 当选择的数据集改变时，更新当前显示的数据
   useEffect(() => {
@@ -114,6 +169,12 @@ const Dashboard: React.FC = () => {
       }
     }
   }, [selectedDataset, allDatasets]);
+
+  // 添加查看详情的函数
+  const showItemDetail = (item: any) => {
+    setSelectedItem(item);
+    setDetailModalVisible(true);
+  };
 
   if (loading) {
     return <div style={{ padding: '20px', textAlign: 'center' }}>数据加载中，请稍候...</div>;
@@ -167,7 +228,7 @@ const Dashboard: React.FC = () => {
   const prepareStrategyComparisonData = () => {
     const result = [];
     strategies.forEach(strategy => {
-      DATASETS.forEach(dataset => {
+      availableDatasets.forEach(dataset => {
         if (allDatasets[dataset] && 
             allDatasets[dataset].overall_metrics && 
             allDatasets[dataset].overall_metrics[strategy]) {
@@ -191,7 +252,7 @@ const Dashboard: React.FC = () => {
       const rowData: any = { strategy };
       
       // 为每个数据集添加准确率列
-      DATASETS.forEach(dataset => {
+      availableDatasets.forEach(dataset => {
         const shortName = getShortDatasetName(dataset);
         if (allDatasets[dataset] && 
             allDatasets[dataset].overall_metrics && 
@@ -215,7 +276,7 @@ const Dashboard: React.FC = () => {
       dataIndex: 'strategy',
       key: 'strategy',
     },
-    ...DATASETS.map(dataset => {
+    ...availableDatasets.map(dataset => {
       const shortName = getShortDatasetName(dataset);
       return {
         title: shortName,
@@ -228,11 +289,11 @@ const Dashboard: React.FC = () => {
   // 准备模型对比表格数据
   const prepareModelComparisonTableData = () => {
     // 为每个模型创建一行数据
-    return MODELS.map(model => {
+    return availableModels.map(model => {
       const rowData: any = { model };
       
       // 为每个数据集添加准确率列
-      DATASETS.forEach(dataset => {
+      availableDatasets.forEach(dataset => {
         const shortName = getShortDatasetName(dataset);
         // 固定的模型数据，而不是随机生成
         const modelAccuracies = {
@@ -282,7 +343,7 @@ const Dashboard: React.FC = () => {
       dataIndex: 'model',
       key: 'model',
     },
-    ...DATASETS.map(dataset => {
+    ...availableDatasets.map(dataset => {
       const shortName = getShortDatasetName(dataset);
       return {
         title: shortName,
@@ -294,7 +355,7 @@ const Dashboard: React.FC = () => {
 
   // 准备模型对比数据（当前选定的策略在不同模型上的表现）
   const prepareModelComparisonData = () => {
-    const result = [];
+    const result: Array<{model: string, dataset: string, accuracy: number}> = [];
     
     // 固定的模型数据，而不是随机生成
     const modelAccuracies = {
@@ -316,20 +377,28 @@ const Dashboard: React.FC = () => {
     };
     
     // 对于每个模型
-    MODELS.forEach(model => {
+    availableModels.forEach(model => {
       // 为当前模型生成在各个数据集上的表现
-      DATASETS.forEach(dataset => {
+      availableDatasets.forEach(dataset => {
         const shortDatasetName = getShortDatasetName(dataset);
         const isCurrentModel = model === selectedModel;
-        let accuracyValue;
+        let accuracyValue = 0;
         
         if (isCurrentModel && 
             allDatasets[dataset]?.overall_metrics[selectedStrategy]?.metrics.accuracy.average_score !== undefined) {
           // 使用真实数据
           accuracyValue = allDatasets[dataset].overall_metrics[selectedStrategy].metrics.accuracy.average_score;
         } else {
-          // 使用固定的模拟数据
-          accuracyValue = modelAccuracies[model][shortDatasetName];
+          // 使用固定的模拟数据或默认值
+          try {
+            if (modelAccuracies[model as keyof typeof modelAccuracies]?.[shortDatasetName as keyof typeof modelAccuracies[keyof typeof modelAccuracies]]) {
+              accuracyValue = modelAccuracies[model as keyof typeof modelAccuracies][shortDatasetName as keyof typeof modelAccuracies[keyof typeof modelAccuracies]];
+            } else {
+              accuracyValue = 0.5; // 默认值
+            }
+          } catch (e) {
+            accuracyValue = 0.5; // 出错时使用默认值
+          }
         }
         
         result.push({
@@ -350,34 +419,119 @@ const Dashboard: React.FC = () => {
       title: '问题ID',
       dataIndex: 'id',
       key: 'id',
+      width: 120,
+      ellipsis: true,
     },
     {
       title: '问题',
       dataIndex: 'question',
       key: 'question',
+      width: 180,
+      ellipsis: {
+        showTitle: false,
+      },
+      render: (question: string) => (
+        <Tooltip placement="topLeft" title={question}>
+          <div className="ellipsis-text">{question}</div>
+        </Tooltip>
+      ),
+    },
+    {
+      title: 'CoT策略',
+      dataIndex: 'strategy',
+      key: 'strategy',
+      width: 100,
+    },
+    {
+      title: '模型',
+      dataIndex: 'model_name',
+      key: 'model_name',
+      width: 120,
       ellipsis: true,
     },
     {
       title: '类别',
       dataIndex: 'category',
       key: 'category',
+      width: 80,
     },
     {
       title: '难度',
       dataIndex: 'difficulty',
       key: 'difficulty',
+      width: 80,
     },
     {
       title: '准确率',
       dataIndex: ['metrics', 'accuracy', 'score'],
       key: 'accuracy',
+      width: 80,
       render: (score: number) => score.toFixed(2)
+    },
+    {
+      title: '模型回答',
+      dataIndex: 'model_answer',
+      key: 'model_answer',
+      width: 250,
+      ellipsis: {
+        showTitle: false,
+      },
+      render: (answer: string) => (
+        <Tooltip placement="topLeft" title={answer}>
+          <div className="ellipsis-text">{answer}</div>
+        </Tooltip>
+      ),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 80,
+      render: (_, record: any) => (
+        <Button type="link" onClick={() => showItemDetail(record)}>
+          详情
+        </Button>
+      ),
     }
   ];
 
+  // 添加CSS样式到页面顶部
+  const styles = `
+  .ellipsis-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  .detail-section {
+    margin-bottom: 20px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+  }
+
+  .detail-content {
+    background: #f9f9f9;
+    padding: 10px;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    font-family: monospace;
+    margin-top: 5px;
+  }
+
+  .dashboard {
+    min-height: 100vh;
+  }
+
+  .header {
+    background: #fff;
+    padding: 0 20px;
+  }
+  `;
+
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ background: '#fff', padding: '0 20px' }}>
+    <Layout className="dashboard">
+      <style>{styles}</style>
+      <Header className="header">
         <h1>CoT评估结果展示</h1>
       </Header>
       <Content style={{ padding: '20px' }}>
@@ -389,9 +543,9 @@ const Dashboard: React.FC = () => {
                 value={selectedDataset}
                 onChange={setSelectedDataset}
               >
-                {DATASETS.map(dataset => (
+                {availableDatasets.map(dataset => (
                   <Option key={dataset} value={dataset}>
-                    {dataset}
+                    {getShortDatasetName(dataset)}
                   </Option>
                 ))}
               </Select>
@@ -404,7 +558,7 @@ const Dashboard: React.FC = () => {
                 value={selectedModel}
                 onChange={setSelectedModel}
               >
-                {MODELS.map(model => (
+                {availableModels.map(model => (
                   <Option key={model} value={model}>
                     {model}
                   </Option>
@@ -431,8 +585,9 @@ const Dashboard: React.FC = () => {
           <Col span={8}>
             <Card>
               <Statistic
-                title="总问题数"
-                value={data.overall_metrics[selectedStrategy]?.total_questions || 0}
+                title="总评估记录数"
+                value={data.overall_metrics[selectedStrategy].total_records}
+                suffix={`条`}
               />
             </Card>
           </Col>
@@ -446,20 +601,11 @@ const Dashboard: React.FC = () => {
               />
             </Card>
           </Col>
-          <Col span={8}>
-            <Card>
-              <Statistic
-                title="所选数据集"
-                value={selectedDataset}
-                valueStyle={{ fontSize: '16px' }}
-              />
-            </Card>
-          </Col>
 
           <Col span={24}>
             <Tabs defaultActiveKey="1">
               <TabPane tab="策略对比" key="1">
-                <Card title={`${selectedModel}模型在不同CoT策略在各数据集上的准确率对比`}>
+                <Card title={`${selectedModel}模型在不同CoT策略上的准确率对比`}>
                   {strategyComparisonData.length > 0 ? (
                     <Column
                       data={strategyComparisonData}
@@ -487,7 +633,7 @@ const Dashboard: React.FC = () => {
                     <div>无策略对比数据</div>
                   )}
                 </Card>
-                <Card title={`${selectedModel}模型在不同CoT策略各数据集上的准确率对比表格`} style={{ marginTop: '16px' }}>
+                <Card title={`${selectedModel}模型在不同CoT策略上的准确率对比表格`} style={{ marginTop: '16px' }}>
                   <Table
                     dataSource={tableData}
                     columns={tableColumns}
@@ -541,18 +687,94 @@ const Dashboard: React.FC = () => {
             </Tabs>
           </Col>
 
-          <Col span={24}>
-            <Card title="详细评估结果">
-              <Table
-                dataSource={data[selectedStrategy] || []}
-                columns={columns}
-                rowKey="id"
-                pagination={{ pageSize: 10 }}
-              />
+          <Col span={24} style={{ marginTop: '20px' }}>
+            <Card title="详细评估记录">
+              {data[selectedStrategy].length > 0 ? (
+                <Table
+                  dataSource={data[selectedStrategy]}
+                  columns={columns}
+                  rowKey="id"
+                  pagination={{ pageSize: 10 }}
+                  scroll={{ x: 1200 }}
+                />
+              ) : (
+                <div style={{ textAlign: 'center', padding: '20px' }}>
+                  当前策略下没有评估记录
+                </div>
+              )}
             </Card>
           </Col>
         </Row>
       </Content>
+      
+      {/* 详情弹窗 */}
+      <Modal
+        title="评估详细信息"
+        open={detailModalVisible}
+        onCancel={() => setDetailModalVisible(false)}
+        width={800}
+        footer={null}
+      >
+        {selectedItem ? (
+          <div style={{ maxHeight: '70vh', overflow: 'auto' }}>
+            <div className="detail-section">
+              <h3>基本信息</h3>
+              <p><strong>问题ID:</strong> {selectedItem.id}</p>
+              <p><strong>类别:</strong> {selectedItem.category}</p>
+              <p><strong>难度:</strong> {selectedItem.difficulty}</p>
+              <p><strong>CoT策略:</strong> {selectedItem.strategy}</p>
+              <p><strong>模型:</strong> {selectedItem.model_name}</p>
+            </div>
+            
+            <div className="detail-section">
+              <h3>问题内容</h3>
+              <div className="detail-content">{selectedItem.question}</div>
+            </div>
+            
+            <div className="detail-section">
+              <h3>参考答案</h3>
+              <div className="detail-content">{selectedItem.reference_answer}</div>
+            </div>
+            
+            <div className="detail-section">
+              <h3>模型回答</h3>
+              <div className="detail-content">{selectedItem.model_answer}</div>
+            </div>
+            
+            {selectedItem.reasoning && (
+              <div className="detail-section">
+                <h3>推理过程</h3>
+                <div className="detail-content">{selectedItem.reasoning}</div>
+              </div>
+            )}
+            
+            <div className="detail-section">
+              <h3>评估结果</h3>
+              <p><strong>准确率:</strong> {selectedItem.metrics?.accuracy?.score.toFixed(2)}</p>
+              {selectedItem.metrics?.accuracy?.explanation && (
+                <div>
+                  <strong>解释:</strong>
+                  <div className="detail-content">{selectedItem.metrics.accuracy.explanation}</div>
+                </div>
+              )}
+              
+              {selectedItem.metrics?.reasoning_quality && (
+                <div>
+                  <p><strong>推理质量:</strong> {selectedItem.metrics.reasoning_quality.score}</p>
+                  {selectedItem.metrics.reasoning_quality.explanation && (
+                    <div>
+                      <strong>解释:</strong>
+                      <div className="detail-content">{selectedItem.metrics.reasoning_quality.explanation}</div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div>加载中...</div>
+        )}
+      </Modal>
     </Layout>
   );
 };

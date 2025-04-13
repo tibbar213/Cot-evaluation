@@ -18,13 +18,14 @@ logger = logging.getLogger(__name__)
 class ConversationLogger:
     """对话日志记录器，用于存储模型对话并后续评估"""
     
-    def __init__(self, log_dir: str = os.path.join(RESULT_PATH, "conversation_logs"), result_prefix: Optional[str] = None):
+    def __init__(self, log_dir: str = os.path.join(RESULT_PATH, "conversation_logs"), result_prefix: Optional[str] = None, sqlite_backup=None):
         """
         初始化对话日志记录器
         
         Args:
             log_dir (str): 日志保存目录
             result_prefix (Optional[str]): 结果文件前缀，用于区分不同评估任务
+            sqlite_backup: SQLite备份实例，如果提供则会同时备份到SQLite数据库
         """
         if result_prefix:
             log_dir = os.path.join(log_dir, result_prefix)
@@ -33,6 +34,23 @@ class ConversationLogger:
         
         # 当前会话ID，用当前时间戳表示
         self.session_id = str(int(time.time()))
+        # 保存前缀，用于SQLite备份
+        self.result_prefix = result_prefix
+        # SQLite备份实例
+        self.sqlite_backup = sqlite_backup
+        
+        # 如果有SQLite备份，创建会话记录
+        if self.sqlite_backup:
+            try:
+                self.sqlite_backup.backup_session(
+                    session_id=self.session_id,
+                    result_prefix=result_prefix,
+                    start_time=time.time()
+                )
+                logger.info(f"已在SQLite数据库中创建会话记录: {self.session_id}")
+            except Exception as e:
+                logger.error(f"在SQLite数据库中创建会话记录失败: {e}")
+        
         logger.info(f"创建新的会话: {self.session_id}")
     
     def log_conversation(
@@ -103,6 +121,15 @@ class ConversationLogger:
             json.dump(log_entry, f, ensure_ascii=False, indent=2)
         
         logger.info(f"对话日志已保存: {log_file}")
+        
+        # 如果有SQLite备份，保存到SQLite数据库
+        if self.sqlite_backup:
+            try:
+                self.sqlite_backup.backup_conversation_log(log_entry)
+                logger.info(f"对话日志已备份到SQLite数据库")
+            except Exception as e:
+                logger.error(f"备份对话日志到SQLite数据库失败: {e}")
+        
         return str(log_file)
     
     def get_unevaluated_logs(self, strategy_name: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -174,6 +201,14 @@ class ConversationLogger:
             with open(log_path, 'w', encoding='utf-8') as f:
                 json.dump(log_entry, f, ensure_ascii=False, indent=2)
             
+            # 如果有SQLite备份，更新SQLite数据库中的记录
+            if self.sqlite_backup:
+                try:
+                    self.sqlite_backup.backup_conversation_log(log_entry)
+                    logger.info(f"已更新SQLite数据库中的评估结果")
+                except Exception as e:
+                    logger.error(f"更新SQLite数据库中的评估结果失败: {e}")
+            
             logger.info(f"已将日志 {log_file} 标记为已评估")
             return True
             
@@ -193,6 +228,21 @@ class ConversationLogger:
         """
         logs = []
         
+        # 如果有SQLite备份，优先从SQLite获取
+        if self.sqlite_backup:
+            try:
+                results = self.sqlite_backup.get_session_results(session_id)
+                if results:
+                    # 提取所有评估结果
+                    for strategy, result_list in results.items():
+                        if strategy not in ['timestamp', 'overall_metrics']:
+                            logs.extend(result_list)
+                    logger.info(f"从SQLite数据库中获取了 {len(logs)} 条会话 {session_id} 的日志")
+                    return logs
+            except Exception as e:
+                logger.error(f"从SQLite数据库获取会话 {session_id} 的日志失败: {e}")
+        
+        # 如果没有SQLite备份或者获取失败，从文件系统获取
         # 遍历所有策略目录
         for strategy_dir in [d for d in self.log_dir.iterdir() if d.is_dir()]:
             # 遍历日志文件
@@ -201,23 +251,38 @@ class ConversationLogger:
                     with open(log_file, 'r', encoding='utf-8') as f:
                         log_entry = json.load(f)
                     
-                    # 只返回指定会话的日志
+                    # 检查会话ID
                     if log_entry.get("session_id") == session_id:
+                        # 添加文件路径信息
+                        log_entry["log_file"] = str(log_file)
                         logs.append(log_entry)
                         
                 except Exception as e:
                     logger.error(f"读取日志文件 {log_file} 时出错: {e}")
         
+        logger.info(f"找到 {len(logs)} 条会话 {session_id} 的日志")
         return logs
     
-    def get_all_sessions(self) -> List[str]:
+    def get_all_sessions(self) -> List[Dict[str, Any]]:
         """
-        获取所有会话ID
+        获取所有会话
         
         Returns:
-            List[str]: 会话ID列表
+            List[Dict[str, Any]]: 会话信息列表
         """
-        sessions = set()
+        # 如果有SQLite备份，优先从SQLite获取
+        if self.sqlite_backup:
+            try:
+                sessions = self.sqlite_backup.get_sessions()
+                if sessions:
+                    logger.info(f"从SQLite数据库中获取了 {len(sessions)} 个会话")
+                    return sessions
+            except Exception as e:
+                logger.error(f"从SQLite数据库获取会话列表失败: {e}")
+        
+        # 如果没有SQLite备份或者获取失败，从文件系统获取
+        session_ids = set()
+        session_info = []
         
         # 遍历所有策略目录
         for strategy_dir in [d for d in self.log_dir.iterdir() if d.is_dir()]:
@@ -227,14 +292,26 @@ class ConversationLogger:
                     with open(log_file, 'r', encoding='utf-8') as f:
                         log_entry = json.load(f)
                     
-                    # 收集会话ID
-                    if "session_id" in log_entry:
-                        sessions.add(log_entry["session_id"])
+                    # 获取会话ID
+                    session_id = log_entry.get("session_id")
+                    if session_id and session_id not in session_ids:
+                        session_ids.add(session_id)
+                        
+                        # 创建会话信息
+                        session_data = {
+                            "session_id": session_id,
+                            "result_prefix": self.result_prefix,
+                            "start_time": log_entry.get("timestamp")
+                        }
+                        session_info.append(session_data)
                         
                 except Exception as e:
                     logger.error(f"读取日志文件 {log_file} 时出错: {e}")
         
-        return list(sessions)
+        # 按时间戳排序
+        session_info.sort(key=lambda x: x.get("start_time", 0), reverse=True)
+        logger.info(f"找到 {len(session_info)} 个会话")
+        return session_info
     
     def add_evaluation_metrics(
         self, 
@@ -244,12 +321,12 @@ class ConversationLogger:
         metrics: Optional[Dict[str, Any]] = None
     ) -> bool:
         """
-        将评估指标添加到日志文件中
+        添加评估指标到日志
         
         Args:
             log_file (str): 日志文件路径
-            accuracy_score (float): 准确率评分
-            accuracy_explanation (str): 准确率评分说明
+            accuracy_score (float): 准确率分数
+            accuracy_explanation (str): 准确率解释
             metrics (Optional[Dict[str, Any]]): 其他评估指标
             
         Returns:
@@ -262,30 +339,37 @@ class ConversationLogger:
             with open(log_path, 'r', encoding='utf-8') as f:
                 log_entry = json.load(f)
             
-            # 更新评估状态和结果
-            log_entry["evaluated"] = True
-            if "evaluation_result" not in log_entry:
-                log_entry["evaluation_result"] = {}
-            
-            # 添加准确率评分
-            log_entry["evaluation_result"]["accuracy"] = {
-                "score": accuracy_score,
-                "explanation": accuracy_explanation
+            # 构建评估结果
+            evaluation_result = {
+                "accuracy": {
+                    "score": accuracy_score,
+                    "explanation": accuracy_explanation
+                }
             }
             
-            # 添加其他评估指标
+            # 添加其他指标
             if metrics:
-                for key, value in metrics.items():
-                    log_entry["evaluation_result"][key] = value
+                for metric_name, metric_value in metrics.items():
+                    evaluation_result[metric_name] = metric_value
             
-            # 添加评估时间戳
+            # 更新评估状态和结果
+            log_entry["evaluated"] = True
+            log_entry["evaluation_result"] = evaluation_result
             log_entry["evaluation_timestamp"] = time.time()
             
             # 保存更新后的日志
             with open(log_path, 'w', encoding='utf-8') as f:
                 json.dump(log_entry, f, ensure_ascii=False, indent=2)
             
-            logger.info(f"已添加评估指标到日志 {log_file}，准确率: {accuracy_score}")
+            # 如果有SQLite备份，更新SQLite数据库中的记录
+            if self.sqlite_backup:
+                try:
+                    self.sqlite_backup.backup_conversation_log(log_entry)
+                    logger.info(f"已更新SQLite数据库中的评估指标")
+                except Exception as e:
+                    logger.error(f"更新SQLite数据库中的评估指标失败: {e}")
+            
+            logger.info(f"已添加评估指标到日志: {log_file}")
             return True
             
         except Exception as e:

@@ -59,3 +59,15 @@ htmlcov/
 .cache
 coverage.xml
 *.cover 
+.roo/system-prompt-architect
+.roo/system-prompt-ask
+.roo/system-prompt-code
+.roo/system-prompt-debug
+.roo/system-prompt-test
+memory-bank/activeContext.md
+memory-bank/decisionLog.md
+memory-bank/productContext.md
+memory-bank/progress.md
+.roomodes
+architecture_plan.md
+evaluation.db

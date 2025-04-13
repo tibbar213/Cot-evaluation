@@ -183,13 +183,17 @@ def evaluate_response(
         # 构建评估提示
         if metric == "accuracy":
             prompt = f"""
-            请评估以下回答的准确性：
+            请严格评估以下回答的准确性：
             
             问题: {question}
             参考答案: {reference_answer}
             模型回答: {model_response}
             
-            请给出评分（0-1之间的小数，其中0表示完全错误，1表示完全正确）并简要解释原因。
+            请给出严格的二元评分：
+            - 如果回答完全正确，给1分
+            - 如果回答有任何错误或不完整，给0分
+            
+            不要给0到1之间的分数，必须是0或1。
             仅返回JSON格式：{{"score": 评分, "explanation": "解释"}}
             """
         elif metric == "reasoning_quality":
