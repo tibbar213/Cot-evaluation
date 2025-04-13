@@ -37,6 +37,11 @@ llm-evaluation/
 ```
 
 ## Web界面使用指南
+![image](https://github.com/user-attachments/assets/8d3c6cbc-e335-43fa-b1bc-d22b3c21c70d)
+![image](https://github.com/user-attachments/assets/e66f9acd-c53e-4ab1-a924-c3d148b6dd36)
+![image](https://github.com/user-attachments/assets/132b1c86-2c8e-4d7d-be1a-f00ab547b929)
+![image](https://github.com/user-attachments/assets/617b0e11-8b7b-4b91-990e-3446f767b037)
+
 
 ### 启动Web服务
 
