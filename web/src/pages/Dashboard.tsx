@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Card, Row, Col, Select, Statistic, Table, Tabs, message, Tooltip, Button, Modal } from 'antd';
+import { Layout, Card, Row, Col, Select, Statistic, Table, Tabs, message, Tooltip, Button, Modal, Spin } from 'antd';
 import { Column } from '@ant-design/plots';
 import type { EvaluationData, EvaluationResult } from '@/types/evaluation';
 
@@ -28,17 +28,18 @@ const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [allDatasets, setAllDatasets] = useState<{[key: string]: EvaluationData}>({});
   const [error, setError] = useState<string | null>(null);
-  // 添加新的状态
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [availableDatasets, setAvailableDatasets] = useState<string[]>([]);
   const [availableStrategies, setAvailableStrategies] = useState<string[]>([]);
   const [optionsLoaded, setOptionsLoaded] = useState(false);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
+  const [optionsLoading, setOptionsLoading] = useState(true);
 
   // 添加一个新的函数来获取选项
   const fetchOptions = async () => {
     try {
+      setOptionsLoading(true);
       console.log("正在获取可用选项");
       const response = await fetch("http://localhost:5000/api/dataset-model-strategy-options");
       
@@ -52,27 +53,41 @@ const Dashboard: React.FC = () => {
       if (json.datasets && json.datasets.length > 0) {
         setAvailableDatasets(json.datasets);
         setSelectedDataset(json.datasets[0]);
+      } else {
+        console.warn("没有可用的数据集");
+        setAvailableDatasets(['livebench/math', 'livebench/reasoning', 'livebench/data_analysis']);
+        setSelectedDataset('livebench/math');
       }
       
       if (json.models && json.models.length > 0) {
         setAvailableModels(json.models);
         setSelectedModel(json.models[0]);
+      } else {
+        console.warn("没有可用的模型");
+        setAvailableModels(['gpt-3.5-turbo', 'gpt-4']);
+        setSelectedModel('gpt-3.5-turbo');
       }
       
       if (json.strategies && json.strategies.length > 0) {
         setAvailableStrategies(json.strategies);
+      } else {
+        console.warn("没有可用的策略");
+        setAvailableStrategies(['baseline', 'zero_shot', 'few_shot', 'auto_cot', 'auto_reason', 'combined']);
       }
       
       setOptionsLoaded(true);
     } catch (error) {
       console.error("获取选项失败:", error);
+      message.error("获取选项失败，请检查服务器连接");
       // 如果API调用失败，使用默认值
-      setAvailableDatasets(['math', 'reasoning']);
-      setAvailableModels(['GPT-3.5', 'GPT-4']);
-      setAvailableStrategies(['baseline', 'zero_shot']);
-      setSelectedDataset('math');
-      setSelectedModel('GPT-3.5');
+      setAvailableDatasets(['livebench/math', 'livebench/reasoning', 'livebench/data_analysis']);
+      setAvailableModels(['gpt-3.5-turbo', 'gpt-4']);
+      setAvailableStrategies(['baseline', 'zero_shot', 'few_shot', 'auto_cot', 'auto_reason', 'combined']);
+      setSelectedDataset('livebench/math');
+      setSelectedModel('gpt-3.5-turbo');
       setOptionsLoaded(true);
+    } finally {
+      setOptionsLoading(false);
     }
   };
 
@@ -93,9 +108,15 @@ const Dashboard: React.FC = () => {
       
       const json = await response.json();
       console.log(`成功加载数据集: ${dataset}`, json);
+      
+      if (!json || Object.keys(json).length === 0) {
+        throw new Error("服务器返回空数据");
+      }
+      
       return { dataset, data: json };
     } catch (error) {
       console.error(`加载数据集 ${dataset} 失败:`, error);
+      message.error(`加载数据集 ${dataset} 失败: ${error.message}`);
       return null;
     }
   };
@@ -103,7 +124,7 @@ const Dashboard: React.FC = () => {
   // 加载所有数据集的数据
   useEffect(() => {
     // 只有当选项加载完成后才加载数据
-    if (!optionsLoaded) return;
+    if (!optionsLoaded || optionsLoading) return;
     
     const loadData = async () => {
       setLoading(true);
@@ -144,16 +165,17 @@ const Dashboard: React.FC = () => {
         });
         
         setAllDatasets(datasetsData);
-        setLoading(false);
       } catch (err) {
         console.error('加载数据失败:', err);
         setError(err.message || '加载数据失败');
+        message.error(`加载数据失败: ${err.message}`);
+      } finally {
         setLoading(false);
       }
     };
     
     loadData();
-  }, [selectedModel, optionsLoaded]); // 添加optionsLoaded作为依赖
+  }, [selectedModel, optionsLoaded, optionsLoading]); // 添加optionsLoading作为依赖
 
   // 当选择的数据集改变时，更新当前显示的数据
   useEffect(() => {
@@ -176,8 +198,22 @@ const Dashboard: React.FC = () => {
     setDetailModalVisible(true);
   };
 
+  if (optionsLoading) {
+    return (
+      <div style={{ padding: '20px', textAlign: 'center' }}>
+        <Spin size="large" />
+        <p>正在加载选项...</p>
+      </div>
+    );
+  }
+
   if (loading) {
-    return <div style={{ padding: '20px', textAlign: 'center' }}>数据加载中，请稍候...</div>;
+    return (
+      <div style={{ padding: '20px', textAlign: 'center' }}>
+        <Spin size="large" />
+        <p>正在加载数据...</p>
+      </div>
+    );
   }
 
   if (error) {
@@ -185,7 +221,7 @@ const Dashboard: React.FC = () => {
       <div style={{ padding: '20px', textAlign: 'center', color: 'red' }}>
         <h2>加载数据出错</h2>
         <p>{error}</p>
-        <button onClick={() => window.location.reload()}>重试</button>
+        <Button type="primary" onClick={() => window.location.reload()}>重试</Button>
       </div>
     );
   }
@@ -195,7 +231,7 @@ const Dashboard: React.FC = () => {
       <div style={{ padding: '20px', textAlign: 'center' }}>
         <h2>没有找到评估数据</h2>
         <p>可能是服务器未返回数据或者数据格式不正确</p>
-        <button onClick={() => window.location.reload()}>重试</button>
+        <Button type="primary" onClick={() => window.location.reload()}>重试</Button>
       </div>
     );
   }
@@ -213,7 +249,7 @@ const Dashboard: React.FC = () => {
         <pre style={{ textAlign: 'left', maxHeight: '300px', overflow: 'auto' }}>
           {JSON.stringify(data, null, 2)}
         </pre>
-        <button onClick={() => window.location.reload()}>重试</button>
+        <Button type="primary" onClick={() => window.location.reload()}>重试</Button>
       </div>
     );
   }
@@ -297,7 +333,7 @@ const Dashboard: React.FC = () => {
         const shortName = getShortDatasetName(dataset);
         // 固定的模型数据，而不是随机生成
         const modelAccuracies = {
-          'gpt-3.5': {
+          'gpt-3.5-turbo': {
             'Math': 0.65,
             'Reasoning': 0.72,
             'Data Analysis': 0.68
@@ -316,15 +352,22 @@ const Dashboard: React.FC = () => {
         
         // 使用真实数据或固定的模拟数据
         const isCurrentModel = model === selectedModel;
-        let accuracyValue;
+        let accuracyValue = 0.5; // 默认值
         
         if (isCurrentModel && 
-            allDatasets[dataset]?.overall_metrics[selectedStrategy]?.metrics.accuracy.average_score !== undefined) {
+            allDatasets[dataset]?.overall_metrics?.[selectedStrategy]?.metrics?.accuracy?.average_score !== undefined) {
           // 使用真实数据
           accuracyValue = allDatasets[dataset].overall_metrics[selectedStrategy].metrics.accuracy.average_score;
         } else {
-          // 使用固定的模拟数据
-          accuracyValue = modelAccuracies[model][shortName];
+          // 使用固定的模拟数据，添加安全检查
+          try {
+            if (modelAccuracies[model] && modelAccuracies[model][shortName] !== undefined) {
+              accuracyValue = modelAccuracies[model][shortName];
+            }
+            // 如果没有找到对应的数据，保持默认值
+          } catch (error) {
+            console.warn(`无法找到模型 ${model} 在数据集 ${shortName} 上的准确率数据`, error);
+          }
         }
         
         rowData[shortName] = accuracyValue.toFixed(2);
@@ -359,7 +402,7 @@ const Dashboard: React.FC = () => {
     
     // 固定的模型数据，而不是随机生成
     const modelAccuracies = {
-      'gpt-3.5': {
+      'gpt-3.5-turbo': {
         'Math': 0.65,
         'Reasoning': 0.72,
         'Data Analysis': 0.68
@@ -382,22 +425,21 @@ const Dashboard: React.FC = () => {
       availableDatasets.forEach(dataset => {
         const shortDatasetName = getShortDatasetName(dataset);
         const isCurrentModel = model === selectedModel;
-        let accuracyValue = 0;
+        let accuracyValue = 0.5; // 默认值
         
         if (isCurrentModel && 
-            allDatasets[dataset]?.overall_metrics[selectedStrategy]?.metrics.accuracy.average_score !== undefined) {
+            allDatasets[dataset]?.overall_metrics?.[selectedStrategy]?.metrics?.accuracy?.average_score !== undefined) {
           // 使用真实数据
           accuracyValue = allDatasets[dataset].overall_metrics[selectedStrategy].metrics.accuracy.average_score;
         } else {
-          // 使用固定的模拟数据或默认值
+          // 使用固定的模拟数据，添加安全检查
           try {
-            if (modelAccuracies[model as keyof typeof modelAccuracies]?.[shortDatasetName as keyof typeof modelAccuracies[keyof typeof modelAccuracies]]) {
-              accuracyValue = modelAccuracies[model as keyof typeof modelAccuracies][shortDatasetName as keyof typeof modelAccuracies[keyof typeof modelAccuracies]];
-            } else {
-              accuracyValue = 0.5; // 默认值
+            if (modelAccuracies[model] && modelAccuracies[model][shortDatasetName] !== undefined) {
+              accuracyValue = modelAccuracies[model][shortDatasetName];
             }
-          } catch (e) {
-            accuracyValue = 0.5; // 出错时使用默认值
+            // 如果没有找到对应的数据，保持默认值
+          } catch (error) {
+            console.warn(`无法找到模型 ${model} 在数据集 ${shortDatasetName} 上的准确率数据`, error);
           }
         }
         
@@ -586,7 +628,7 @@ const Dashboard: React.FC = () => {
             <Card>
               <Statistic
                 title="总评估记录数"
-                value={data.overall_metrics[selectedStrategy].total_records}
+                value={data.overall_metrics?.[selectedStrategy]?.total_records || data[selectedStrategy]?.length || 0}
                 suffix={`条`}
               />
             </Card>
@@ -595,7 +637,7 @@ const Dashboard: React.FC = () => {
             <Card>
               <Statistic
                 title="平均准确率"
-                value={data.overall_metrics[selectedStrategy]?.metrics.accuracy.average_score || 0}
+                value={data.overall_metrics?.[selectedStrategy]?.metrics?.accuracy?.average_score || 0}
                 precision={2}
                 suffix="/ 1.00"
               />
@@ -693,7 +735,7 @@ const Dashboard: React.FC = () => {
                 <Table
                   dataSource={data[selectedStrategy]}
                   columns={columns}
-                  rowKey="id"
+                  rowKey={(record) => `${record.id}_${record.strategy}_${record.timestamp}`}
                   pagination={{ pageSize: 10 }}
                   scroll={{ x: 1200 }}
                 />

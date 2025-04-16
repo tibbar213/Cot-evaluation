@@ -156,8 +156,8 @@ def process_question_strategy(
                 response = generate_completion(prompt, model=model_to_use)
             except Exception as api_error:
                 logger.error(f"    API调用失败: {api_error}")
-                # 降级到模拟模式
-                response = f"API调用失败，使用模拟回答。答案是：模拟数据"
+                # 不使用模拟模式，直接抛出异常
+                raise api_error  # 这样会中断当前处理，不会记录到日志
         
         # 处理回答
         try:
@@ -342,19 +342,26 @@ def run_evaluation(
             for strategy_name, strategy in filtered_strategies.items():
                 logger.info(f"  使用策略 {strategy_name}")
                 
-                result = process_question_strategy(
-                    question=question,
-                    strategy_name=strategy_name,
-                    strategy=strategy,
-                    evaluator=evaluator,
-                    conversation_logger=conversation_logger,
-                    log_only=log_only
-                )
-                
-                if result["success"]:
-                    logger.info(f"完成问题 {question_id} 使用策略 {strategy_name} 的评估")
-                else:
-                    logger.error(f"问题 {question_id} 使用策略 {strategy_name} 的评估失败: {result['error']}")
+                try:
+                    result = process_question_strategy(
+                        question=question,
+                        strategy_name=strategy_name,
+                        strategy=strategy,
+                        evaluator=evaluator,
+                        conversation_logger=conversation_logger,
+                        log_only=log_only
+                    )
+                    
+                    if result["success"]:
+                        logger.info(f"完成问题 {question_id} 使用策略 {strategy_name} 的评估")
+                    else:
+                        logger.error(f"问题 {question_id} 使用策略 {strategy_name} 的评估失败: {result['error']}")
+                except Exception as e:
+                    # 检查是否是API调用相关错误
+                    if "API调用失败" in str(e) or "account balance is insufficient" in str(e):
+                        logger.warning(f"问题 {question_id} 使用策略 {strategy_name} 的API调用失败，跳过此评估: {e}")
+                    else:
+                        logger.error(f"处理问题 {question_id} 使用策略 {strategy_name} 时出错: {e}")
     else:
         # 多线程处理
         logger.info(f"使用多线程处理评估任务 (线程数: {num_threads})")
@@ -390,7 +397,11 @@ def run_evaluation(
                     else:
                         logger.error(f"问题 {question_id} 使用策略 {strategy_name} 的评估失败: {result['error']}")
                 except Exception as e:
-                    logger.error(f"获取任务结果时出错: {e}")
+                    # 检查是否是API调用相关错误
+                    if "API调用失败" in str(e) or "account balance is insufficient" in str(e):
+                        logger.warning(f"问题 {question_id} 使用策略 {strategy_name} 的API调用失败，跳过此评估: {e}")
+                    else:
+                        logger.error(f"获取任务结果时出错: {e}")
                 
                 completed += 1
                 if completed % 10 == 0 or completed == len(tasks):
