@@ -301,66 +301,104 @@ def load_from_conversation_logs(logs_path, dataset_filter=None, model_filter=Non
         logger.error(f"对话日志目录 {logs_path} 不存在")
         return results
     
-    # 获取所有策略目录
-    strategy_dirs = [d for d in os.listdir(logs_path) if os.path.isdir(os.path.join(logs_path, d))]
-    logger.info(f"找到 {len(strategy_dirs)} 个策略目录: {', '.join(strategy_dirs)}")
+    # 预处理dataset_filter，移除可能的路径前缀
+    clean_dataset_filter = None
+    if dataset_filter:
+        # 如果是路径格式，提取最后一部分
+        if '/' in dataset_filter:
+            clean_dataset_filter = dataset_filter.split('/')[-1]
+        else:
+            clean_dataset_filter = dataset_filter
+        logger.info(f"过滤数据集: {dataset_filter} -> {clean_dataset_filter}")
     
-    for strategy in strategy_dirs:
-        strategy_path = os.path.join(logs_path, strategy)
-        log_files = [f for f in os.listdir(strategy_path) if f.endswith('.json')]
+    # 获取所有一级目录（数据集目录）
+    dataset_dirs = [d for d in os.listdir(logs_path) if os.path.isdir(os.path.join(logs_path, d))]
+    logger.info(f"找到 {len(dataset_dirs)} 个数据集目录: {', '.join(dataset_dirs)}")
+    
+    def find_json_files(directory):
+        """递归查找目录下的所有JSON文件"""
+        json_files = []
+        for root, _, files in os.walk(directory):
+            for file in files:
+                if file.endswith('.json'):
+                    json_files.append(os.path.join(root, file))
+        return json_files
+    
+    # 初始化结果字典的策略字段
+    strategies_found = set()
+    
+    # 遍历数据集目录
+    for dataset_dir in dataset_dirs:
+        dataset_path = os.path.join(logs_path, dataset_dir)
         
-        logger.info(f"策略 {strategy} 中找到 {len(log_files)} 个日志文件")
-        results[strategy] = []
+        # 提取数据集名称
+        dataset_name = dataset_dir
+        if dataset_name.startswith("livebench_evaluation_"):
+            dataset_name = dataset_name[len("livebench_evaluation_"):]
         
-        for log_file in log_files:
-            # 从文件名提取数据集
-            dataset_match = re.match(r'([^_]+)_', log_file)
-            if dataset_match:
-                dataset = dataset_match.group(1)
-                
-                # 如果有数据集过滤，并且当前数据集不匹配，则跳过
-                if dataset_filter and dataset != dataset_filter:
-                    continue
+        # 如果有数据集过滤，并且当前数据集不匹配，则跳过
+        if clean_dataset_filter and dataset_name != clean_dataset_filter:
+            logger.info(f"跳过数据集 {dataset_name}，因为不匹配过滤器 {clean_dataset_filter}")
+            continue
             
-            try:
-                with open(os.path.join(strategy_path, log_file), 'r', encoding='utf-8') as f:
-                    log_data = json.load(f)
-                    
-                    # 如果有模型过滤器，并且当前模型不匹配，则跳过
-                    if model_filter and log_data.get('model_name') != model_filter:
-                        continue
-                    
-                    # 创建一个新的评估记录，只包含需要的字段
-                    eval_item = {
-                        "id": log_data.get("question_id", "unknown"),
-                        "question": log_data.get("question", ""),
-                        "category": log_data.get("category", ""),
-                        "difficulty": log_data.get("difficulty", ""),
-                        "strategy": log_data.get("strategy", strategy),
-                        "model_name": log_data.get("model_name", "Unknown"),
-                        "reference_answer": log_data.get("reference_answer", ""),
-                        "model_answer": log_data.get("model_answer", ""),
-                        "full_response": log_data.get("full_response", ""),
-                        "reasoning": log_data.get("reasoning", None),
-                        "has_reasoning": log_data.get("has_reasoning", False),
-                        "timestamp": log_data.get("timestamp", time.time())
-                    }
-                    
-                    # 添加评估指标
-                    if "evaluation_result" in log_data and log_data["evaluation_result"]:
-                        eval_item["metrics"] = log_data["evaluation_result"]
-                    else:
-                        # 未评估或无结果时提供默认值
-                        eval_item["metrics"] = {
-                            "accuracy": {
-                                "score": 0,
-                                "explanation": "未评估或无评估结果"
-                            }
+        # 获取二级目录（策略目录）
+        strategy_dirs = [d for d in os.listdir(dataset_path) if os.path.isdir(os.path.join(dataset_path, d))]
+        logger.info(f"数据集 {dataset_name} 中找到 {len(strategy_dirs)} 个策略目录")
+        
+        # 遍历策略目录
+        for strategy in strategy_dirs:
+            strategies_found.add(strategy)
+            strategy_path = os.path.join(dataset_path, strategy)
+            
+            # 如果结果字典中没有该策略的键，添加一个
+            if strategy not in results:
+                results[strategy] = []
+                
+            # 获取策略目录下的所有JSON文件
+            log_files = find_json_files(strategy_path)
+            logger.info(f"策略 {strategy} 中找到 {len(log_files)} 个日志文件")
+            
+            # 读取和处理日志文件
+            for log_file in log_files:
+                try:
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        log_data = json.load(f)
+                        
+                        # 如果有模型过滤器，并且当前模型不匹配，则跳过
+                        if model_filter and log_data.get('model_name') != model_filter:
+                            continue
+                        
+                        # 创建一个新的评估记录，只包含需要的字段
+                        eval_item = {
+                            "id": log_data.get("question_id", "unknown"),
+                            "question": log_data.get("question", ""),
+                            "category": log_data.get("category", ""),
+                            "difficulty": log_data.get("difficulty", ""),
+                            "strategy": log_data.get("strategy", strategy),
+                            "model_name": log_data.get("model_name", "Unknown"),
+                            "reference_answer": log_data.get("reference_answer", ""),
+                            "model_answer": log_data.get("model_answer", ""),
+                            "full_response": log_data.get("full_response", ""),
+                            "reasoning": log_data.get("reasoning", None),
+                            "has_reasoning": log_data.get("has_reasoning", False),
+                            "timestamp": log_data.get("timestamp", time.time())
                         }
-                    
-                    results[strategy].append(eval_item)
-            except Exception as e:
-                logger.error(f"读取日志文件 {log_file} 失败: {e}")
+                        
+                        # 添加评估指标
+                        if "evaluation_result" in log_data and log_data["evaluation_result"]:
+                            eval_item["metrics"] = log_data["evaluation_result"]
+                        else:
+                            # 未评估或无结果时提供默认值
+                            eval_item["metrics"] = {
+                                "accuracy": {
+                                    "score": 0,
+                                    "explanation": "未评估或无评估结果"
+                                }
+                            }
+                        
+                        results[strategy].append(eval_item)
+                except Exception as e:
+                    logger.error(f"读取日志文件 {log_file} 失败: {e}")
     
     # 计算总体指标
     overall_metrics = calculate_overall_metrics(results)
@@ -369,7 +407,7 @@ def load_from_conversation_logs(logs_path, dataset_filter=None, model_filter=Non
     # 添加时间戳
     results['timestamp'] = time.time()
     
-    logger.info(f"从对话日志加载了 {len(strategy_dirs)} 个策略的数据")
+    logger.info(f"从对话日志加载了 {len(strategies_found)} 个策略的数据")
     return results
 
 # 添加计算总体指标的函数
@@ -462,18 +500,31 @@ def get_evaluation_results():
         # 获取查询参数
         dataset = request.args.get('dataset', 'livebench/math')
         model = request.args.get('model', 'gpt-3.5')
+        strategy = request.args.get('strategy', None) 
         session_id = request.args.get('session_id')
         json_path = request.args.get('json_path', '../results/eval_results.json')
-        logs_path = request.args.get('logs_path', '../results/conversation_logs')
+        logs_path = request.args.get('logs_path', 'results/conversation_logs')
         use_json = request.args.get('use_json', 'false').lower() in ('true', '1', 'yes')
         use_logs = request.args.get('use_logs', 'true').lower() in ('true', '1', 'yes')
+        
+        logger.info(f"查询参数: dataset={dataset}, model={model}, strategy={strategy}")
         
         # 优先从对话日志加载数据
         if use_logs:
             logger.info(f"尝试从对话日志目录 {logs_path} 加载数据")
-            result_data = load_from_conversation_logs(logs_path)
+            # 将dataset和model参数传递给load_from_conversation_logs函数
+            result_data = load_from_conversation_logs(logs_path, dataset_filter=dataset, model_filter=model)
+            
             if result_data:
                 logger.info("从对话日志目录加载数据成功")
+                # 如果指定了策略，只返回该策略的结果
+                if strategy and strategy in result_data:
+                    filtered_data = {
+                        strategy: result_data[strategy],
+                        'overall_metrics': {strategy: result_data['overall_metrics'].get(strategy, {})},
+                        'timestamp': result_data['timestamp']
+                    }
+                    return jsonify(filtered_data)
                 return jsonify(result_data)
             else:
                 logger.info("从对话日志目录加载数据失败，尝试其他数据源")
@@ -520,7 +571,7 @@ def get_options():
         logger.info("收到获取选项的请求")
         
         # 获取查询参数
-        logs_path = request.args.get('logs_path', '../results/conversation_logs')
+        logs_path = request.args.get('logs_path', 'results/conversation_logs')
         
         available_options = {
             "strategies": [],
@@ -533,37 +584,69 @@ def get_options():
             logger.error(f"对话日志目录 {logs_path} 不存在")
             return jsonify(available_options)
         
-        # 获取所有策略目录
-        strategy_dirs = [d for d in os.listdir(logs_path) if os.path.isdir(os.path.join(logs_path, d))]
-        available_options["strategies"] = strategy_dirs
-        
-        # 获取所有数据集和模型
+        # 获取所有策略目录（修改为获取二级目录）
+        strategies = set()
         datasets = set()
         models = set()
         
-        for strategy in strategy_dirs:
-            strategy_path = os.path.join(logs_path, strategy)
-            log_files = [f for f in os.listdir(strategy_path) if f.endswith('.json')]
-            
-            for log_file in log_files:
-                # 从文件名提取数据集
-                dataset_match = re.match(r'([^_]+)_', log_file)
-                if dataset_match:
-                    datasets.add(dataset_match.group(1))
-                
-                # 读取文件获取模型信息
-                try:
-                    with open(os.path.join(strategy_path, log_file), 'r', encoding='utf-8') as f:
-                        log_data = json.load(f)
-                        if 'model_name' in log_data:
-                            models.add(log_data['model_name'])
-                except Exception as e:
-                    logger.error(f"读取日志文件 {log_file} 失败: {e}")
+        # 获取一级目录（数据集目录）
+        dataset_dirs = [d for d in os.listdir(logs_path) if os.path.isdir(os.path.join(logs_path, d))]
+        logger.info(f"扫描数据集目录: {dataset_dirs}")
         
+        def find_json_files(directory):
+            """递归查找目录下的所有JSON文件"""
+            json_files = []
+            for root, _, files in os.walk(directory):
+                for file in files:
+                    if file.endswith('.json'):
+                        json_files.append(os.path.join(root, file))
+            return json_files
+        
+        # 遍历一级目录，获取二级目录（策略目录）
+        for dataset_dir in dataset_dirs:
+            dataset_path = os.path.join(logs_path, dataset_dir)
+            
+            # 提取数据集名称
+            dataset_name = dataset_dir
+            if dataset_name.startswith("livebench_evaluation_"):
+                # 从目录名称中提取数据集名称
+                dataset_name = dataset_name[len("livebench_evaluation_"):]
+            datasets.add(dataset_name)
+            logger.info(f"发现数据集: {dataset_name}，原始目录: {dataset_dir}")
+            
+            # 获取策略目录
+            strategy_dirs = [d for d in os.listdir(dataset_path) if os.path.isdir(os.path.join(dataset_path, d))]
+            logger.info(f"数据集 {dataset_name} 中的策略目录: {strategy_dirs}")
+            
+            for strategy in strategy_dirs:
+                strategies.add(strategy)
+                logger.info(f"发现策略: {strategy}，属于数据集: {dataset_name}")
+                
+                # 获取该策略下的所有JSON文件
+                strategy_path = os.path.join(dataset_path, strategy)
+                log_files = find_json_files(strategy_path)
+                logger.info(f"策略 {strategy} 中找到 {len(log_files)} 个日志文件")
+                
+                # 读取JSON文件获取模型信息
+                model_count = 0
+                for log_file in log_files:
+                    try:
+                        with open(log_file, 'r', encoding='utf-8') as f:
+                            log_data = json.load(f)
+                            if 'model_name' in log_data:
+                                model_name = log_data['model_name']
+                                models.add(model_name)
+                                model_count += 1
+                                if model_count <= 3:  # 只记录前几个模型，避免日志过长
+                                    logger.info(f"发现模型: {model_name}，来自文件: {os.path.basename(log_file)}")
+                    except Exception as e:
+                        logger.error(f"读取日志文件 {log_file} 失败: {e}")
+        
+        available_options["strategies"] = list(strategies)
         available_options["datasets"] = list(datasets)
         available_options["models"] = list(models)
         
-        logger.info(f"可用选项: {available_options}")
+        logger.info(f"可用选项: 数据集={datasets}, 策略={strategies}, 模型数量={len(models)}")
         return jsonify(available_options)
     except Exception as e:
         logger.error(f"获取选项时出错: {e}")
@@ -579,7 +662,7 @@ def parse_args():
     parser.add_argument("--use-json", action="store_true", help="使用JSON文件")
     parser.add_argument("--json-path", type=str, default="../results/eval_results.json", help="JSON文件路径")
     parser.add_argument("--use-logs", action="store_true", default=True, help="使用对话日志目录")
-    parser.add_argument("--logs-path", type=str, default="../results/conversation_logs", help="对话日志目录路径")
+    parser.add_argument("--logs-path", type=str, default="results/conversation_logs", help="对话日志目录路径")
     return parser.parse_args()
 
 if __name__ == "__main__":
